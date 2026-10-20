@@ -141,6 +141,9 @@ export function ReviewStep({ go }: { go: (s: "scan" | "split") => void }) {
             {r.printedSubtotalCents !== null && r.printedSubtotalCents !== totals.value.itemSubtotalCents && (
               <p className="text-xs text-warning-foreground">Printed subtotal was {formatMoney(r.printedSubtotalCents)}.</p>
             )}
+            {r.printedNetSubtotalCents != null && (
+              <p className="text-xs text-muted-foreground">Printed pre-tax subtotal: {formatMoney(r.printedNetSubtotalCents)}.</p>
+            )}
             {totals.value.discountCents > 0 && <Row k="Discount" v={-totals.value.discountCents} />}
             {r.serviceEnabled && <Row k={`Service charge${r.chargeMode === "percentage" ? ` (${formatRate(r.serviceRateBp)}%)` : ""}`} v={totals.value.serviceCents} />}
             {r.gstEnabled && !r.gstInclusive && <Row k={`GST${r.chargeMode === "percentage" ? ` (${formatRate(r.gstRateBp)}%)` : ""}`} v={totals.value.gstAddedCents} />}
@@ -172,3 +175,4 @@ export function ReviewStep({ go }: { go: (s: "scan" | "split") => void }) {
 function Row({ k, v, muted }: { k: string; v: number; muted?: boolean }) {
   return <div className={`flex justify-between ${muted ? "text-muted-foreground" : ""}`}><dt>{k}</dt><dd className="money">{formatMoney(v)}</dd></div>;
 }
+

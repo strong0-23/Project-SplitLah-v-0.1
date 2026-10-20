@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Camera, FileText, ImageUp, Sparkles } from "lucide-react";
+import { Camera, FileText, ImageUp, RotateCcw, RotateCw, Sparkles } from "lucide-react";
 import { useBill } from "@/hooks/use-bill";
-import { ACCEPTED_TYPES, MAX_UPLOAD_BYTES, runOcr, validateImageFile, type OcrProgress } from "@/lib/ocr";
-import { parseReceiptText } from "@/lib/parser";
+import { ACCEPTED_TYPES, MAX_UPLOAD_BYTES, OcrCancelled, preparePreview, runOcr, validateImageFile, type OcrProgress, type Rotation, type CropFractions } from "@/lib/ocr";
+import { parseReceiptText, scoreParse } from "@/lib/parser";
+import { computeTotals } from "@/lib/bill";
 import { Button, Card, Notice } from "./ui";
 import { Shell } from "./Shell";
 
@@ -15,6 +16,21 @@ export function ScanStep({ go }: { go: (s: "review" | "split") => void }) {
   const camRef = useRef<HTMLInputElement>(null);
   const upRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const [rotation, setRotation] = useState<Rotation | null>(null);
+  const [crop, setCrop] = useState<CropFractions | null>(null);
+  const [manualCrop, setManualCrop] = useState(false);
+
+  // Prepared preview: oriented, cropped and lighting-corrected, as the recogniser will see it.
+  useEffect(() => {
+    if (!file) return;
+    let live = true;
+    preparePreview(file, { rotation, crop: manualCrop ? crop : null })
+      .then((p) => { if (live) { setPreview(URL.createObjectURL(p.blob)); setPreviewRotation(p.rotation); } })
+      .catch((e) => { if (live) setError(e instanceof Error ? e.message : "Couldn't open this image."); });
+    return () => { live = false; };
+  }, [file, rotation, crop, manualCrop]);
+  const [previewRotation, setPreviewRotation] = useState<Rotation>(0);
+  const turn = (d: 90 | -90) => setRotation((r) => ((((r ?? previewRotation) + d) % 360 + 360) % 360) as Rotation);
 
   // Revoke object URL whenever the preview changes or on unmount. Images live in memory only.
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
@@ -28,27 +44,38 @@ export function ScanStep({ go }: { go: (s: "review" | "split") => void }) {
     if (err) { setError(err); return; }
     setError(null);
     setFile(f);
-    setPreview(URL.createObjectURL(f));
+    setRotation(null);
+    setCrop(null);
+    setManualCrop(false);
   };
 
   const scan = async () => {
-    if (!file || !confirmReplace()) return;
+    if (!file || abortRef.current || !confirmReplace()) return;
     setError(null);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const text = await runOcr(file, setProgress, ctrl.signal);
+      const res = await runOcr(file, { rotation, crop: manualCrop ? crop : null }, setProgress, ctrl.signal, (t) => {
+        const { receipt: r } = parseReceiptText(t);
+        const s = scoreParse(r);
+        const totals = computeTotals(r);
+        return { score: s, good: r.items.length > 0 && r.receiptTotalCents !== null && totals.ok && totals.value.mismatchCents === 0 && !r.uncertainFields?.some((field) => field === "charges" || field === "items" || field === "total") && !r.items.some((i) => i.lineTotalCents === null) };
+      });
       if (ctrl.signal.aborted) return;
-      if (!text.trim()) throw new Error("No text was found in this image.");
-      const { receipt } = parseReceiptText(text);
+      const { receipt } = parseReceiptText(res.text);
+      if (receipt.items.length === 0) {
+        setRotation(res.rotation);
+        throw new Error("Text was read but no priced items were found. Rotate or crop the photo to just the receipt and try again.");
+      }
       bill.startFromReceipt(receipt);
       setFile(null);
       setPreview(null);
       go("review");
     } catch (e) {
-      if (!ctrl.signal.aborted)
+      if (!(e instanceof OcrCancelled) && !ctrl.signal.aborted)
         setError(`${e instanceof Error ? e.message : "Scanning failed."} You can try another photo or enter the items manually.`);
     } finally {
+      if (abortRef.current === ctrl) abortRef.current = null;
       setProgress(null);
     }
   };
@@ -91,6 +118,24 @@ export function ScanStep({ go }: { go: (s: "review" | "split") => void }) {
         <Card className="space-y-3">
           <h2 className="font-semibold">Receipt photo</h2>
           {preview && <img src={preview} alt="Selected receipt" className="max-h-80 w-full rounded-lg border border-border bg-muted object-contain" />}
+          {!busy && (
+            <div className="space-y-2">
+              <div className="grid grid-cols-3 gap-2">
+                <Button variant="outline" onClick={() => turn(-90)} aria-label="Rotate left"><RotateCcw className="h-4 w-4" aria-hidden /></Button>
+                <Button variant="outline" onClick={() => turn(90)} aria-label="Rotate right"><RotateCw className="h-4 w-4" aria-hidden /></Button>
+                <Button variant="outline" onClick={() => { setManualCrop((m) => !m); setCrop((c) => c ?? { left: 0, top: 0, right: 1, bottom: 1 }); }}>{manualCrop ? "Auto crop" : "Crop"}</Button>
+              </div>
+              <p className="text-xs text-muted-foreground">{rotation === null ? "Orientation: automatic." : "Orientation set manually."} Make the text upright and crop to the paper if reading fails.</p>
+              {manualCrop && crop && (["left", "right", "top", "bottom"] as const).map((k) => (
+                <label key={k} className="flex items-center gap-2 text-xs capitalize">
+                  <span className="w-14">{k}</span>
+                  <input type="range" min={0} max={45} className="flex-1" aria-label={`Crop ${k}`}
+                    value={Math.round((k === "left" || k === "top" ? crop[k] : 1 - crop[k]) * 100)}
+                    onChange={(e) => { const v = Number(e.target.value) / 100; setCrop({ ...crop, [k]: k === "left" || k === "top" ? v : 1 - v }); }} />
+                </label>
+              ))}
+            </div>
+          )}
           {busy ? (
             <div className="space-y-2" aria-live="polite">
               <div className="flex justify-between text-sm"><span>{progress.status}…</span><span className="money">{Math.round(progress.progress * 100)}%</span></div>
@@ -122,3 +167,4 @@ export function ScanStep({ go }: { go: (s: "review" | "split") => void }) {
     </Shell>
   );
 }
+
