@@ -21,6 +21,8 @@ export interface Receipt {
   items: ReceiptItem[];
   /** Subtotal printed on the receipt (for cross-checking only; never used for billing). */
   printedSubtotalCents: Cents | null;
+  /** Printed PRE-TAX subtotal (e.g. "Sales Amount") when item prices include GST. Evidence only. */
+  printedNetSubtotalCents?: Cents | null | undefined;
   /** Bill-level discount, distributed proportionally. */
   discountCents: Cents;
   chargeMode: ChargeMode;
@@ -96,3 +98,4 @@ export interface BillCalculation {
   totals: BillTotals;
   participants: ParticipantBill[];
 }
+

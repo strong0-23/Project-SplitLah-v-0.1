@@ -22,6 +22,7 @@ const receiptSchema = z.object({
   currency: z.literal("SGD"),
   items: z.array(z.object({ id, description: text(120), quantity: z.number().int().min(1).max(MAX_QUANTITY), lineTotalCents: cents.nullable(), flagged: z.boolean().optional() })).max(300),
   printedSubtotalCents: cents.nullable(),
+  printedNetSubtotalCents: cents.nullable().optional(),
   discountCents: cents,
   chargeMode: z.enum(["percentage", "receipt"]),
   serviceEnabled: z.boolean(),
@@ -96,3 +97,4 @@ export function saveSession(session: Session): boolean {
 export function clearSession(): void {
   try { store()?.removeItem(STORAGE_KEY); } catch { /* ignore */ }
 }
+
