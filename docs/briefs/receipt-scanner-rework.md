@@ -14,7 +14,7 @@ This brief has two batches. **Do Batch 1 first.** Start Batch 2 only after the o
 Make receipt scanning work for as many receipt types as possible while keeping it lightweight and modular. Make no change to bill maths, storage schema or UI flow beyond what the scanner needs.
 
 ### Hard rules (apply to both batches)
-1. **Never push to `main` and never merge.** Push only `rework/receipt-scanner`, and open a PR into `main` for owner review. Never rewrite pushed history: no force-push, rebase, amend or squash of pushed commits.
+1. **Never push to `main` and never merge.** Push only the batch's work branch (`rework/receipt-scanner` for Batch 1, `engine-eval` for Batch 2), and open a PR for owner review. Never rewrite pushed history: no force-push, rebase, amend or squash of pushed commits.
 2. **Recognition stays on the device.** Never upload images, and add no cloud OCR or vision API.
 3. **Tesseract stays the default engine.** In Batch 1, do no engine tuning and no PaddleOCR work. The engine interface only has to make a swap possible later.
 4. **Receipt data rules carry over from the evaluation brief.**
@@ -140,6 +140,7 @@ The parser also handles:
    - cancel and timeout;
    - releasing resources;
    - word boxes coming back in the same format.
+5. **Report:** write `docs/reports/2026-11-paddle-adapter.md`, covering the SDK and version, download sizes, bundle impact, the contract-test results and any browser limits found.
 
 ### Phase 2c: comparison run (owner-gated)
 1. **Gate:** start only after the owner confirms the four development reference drafts are verified, with currency and complete item lists, and explicitly authorises the held-out run.
@@ -164,6 +165,6 @@ The parser also handles:
    **Do not switch the default engine.** The owner decides. A device-based fallback (Paddle on capable phones, Tesseract otherwise) is proposed only if the results show Paddle passes on accuracy but fails on speed on some phones.
 
 ### Done when (Batch 2)
-- All three reports are committed on `engine-eval` and a PR is open, unmerged.
+- All three Batch 2 reports (parser-v2 port, Paddle adapter, engine comparison) are committed on `engine-eval` and a PR is open, unmerged.
 - Tesseract is still the default.
 - Nothing from the held-out set appears in the repo, logs or reports beyond aggregate scores.
