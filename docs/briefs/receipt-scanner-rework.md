@@ -1,0 +1,106 @@
+# Claude Code brief: receipt scanner rework (handoff)
+
+**Owner:** Lahvin (stakeholder; approves decisions)
+**Repo:** strong0-23/Project-SplitLah-v-0.1
+**Work branch:** `rework/receipt-scanner`, branched from `fix/receipt-ocr-recovery`
+**Baseline for the report:** `main` (the original Lovable import, dabfd34)
+**Target stage:** MVP
+
+## Goal
+Make receipt scanning work for as many receipt types as possible while keeping it lightweight and modular. Make no change to bill maths, storage schema or UI flow beyond what the scanner needs.
+
+## Hard rules
+1. **Never push to `main` and never merge.** Push only `rework/receipt-scanner`, and open a PR into `main` for owner review. Never rewrite pushed history: no force-push, rebase, amend or squash of pushed commits.
+2. **Recognition stays on the device.** Never upload images, and add no cloud OCR or vision API.
+3. **Tesseract stays the default engine.** Do no engine tuning and no PaddleOCR work in this batch. The engine interface only has to make a swap possible later.
+4. **Receipt data rules carry over from the evaluation brief.**
+   - Use synthetic text fixtures only.
+   - Never read or commit real receipt photos, held-out receipts, their references or their OCR text.
+   - Commit nothing containing card numbers or personal names.
+5. Ask the owner before any change to an established interface, the storage schema or the dependencies.
+6. Never claim a check you didn't run.
+
+## State already in the branch (pushed as a WIP commit at handoff)
+New feature module `src/lib/scan/`. The old `ocr.ts`, `parser.ts` and `preprocess.ts` are removed.
+
+| File | Responsibility | Pure? |
+|---|---|---|
+| `types.ts` | Contracts: `OcrEngine`, `OcrPage`/`OcrWord`, errors, scan options | yes |
+| `image.ts` | Lighting flattening, paper bounds (moved from `preprocess.ts`) | yes |
+| `canvas.ts` | Decode, rotate, crop, scale (pixel budget, so long receipts stay legible), preview | DOM adapter |
+| `tesseract-engine.ts` | Tesseract.js adapter behind `OcrEngine` (lazy import) | SDK adapter |
+| `layout.ts` | Word boxes → reading-order rows; wide gaps kept as column marks | yes |
+| `numbers.ts` | Locale-aware amounts (1,234.56 / 1.234,56 / zero-decimal), negatives, OCR digit fixes, currency detection | yes |
+| `lexicon.ts` | Receipt vocabulary (EN, MS/ID, DE/FR/ES/IT/NL). A tail-word check stops "SERVICE TEA" or "TAX-FREE COLA" being read as charges | yes |
+| `items.ts` | Item-row shapes: qty/unit/total columns, `2 @ 3.50`, `x2`, weighed goods | yes |
+| `reconcile.ts` | Inclusive vs exclusive tax, consistency score; `isConsistent` reuses `computeTotals` | yes |
+| `parse.ts` | Section state machine (header → items → summary → footer); lines → draft `Receipt` | yes |
+| `scan.ts` | Workflow: decode → load → orient → recognise → optional 2nd pass; cancellable, time-bounded, engine injected | workflow |
+| `index.ts` | Public API (`scanReceipt` and others). UI imports `@/lib/scan` only | — |
+
+The parser also handles:
+- name rows followed by a detail row;
+- add-ons and modifiers folded into the parent item;
+- item discounts;
+- a bill-level discount;
+- a label on one line with its amount on the next;
+- cash rounding;
+- savings, tip-suggestion and count lines (ignored);
+- multiple tax lines;
+- a "last total before payment" rule.
+
+`ScanStep.tsx` is now a thin caller of `scanReceipt`, and `bill.test.ts` imports from `./scan`.
+
+**Last known checks** (before an interrupted command): 64/64 tests passed (36 existing + 28 new), `tsc` was clean and `vite build` succeeded.
+
+**Interrupted step.** The interrupted command may have partly run. Re-check:
+- `parse.ts` `normaliseLine`: the `\u0000` placeholder regex should be replaced with a split/join (it fails the lint rule `no-control-regex`);
+- `npx prettier --write src/lib/scan`.
+
+## Owner decisions (approved by the owner, 6 Nov 2026)
+- D1: The app stays SGD-only. A non-SGD receipt is parsed with amounts as printed, and the user sees a warning. Zero-decimal currencies are stored ×100 so they display as `1,200.00`.
+- D2: A discount printed directly under an item (before any subtotal) reduces that item. If the printed subtotal equals items + those discounts, they are moved back to the bill-level discount.
+- D3: A priced add-on is added to the item above it. A free add-on becomes a note on that item. Neither becomes an item of its own.
+- D4: Cash rounding of up to 5 cents is recognised, and splitting uses the unrounded total (with a warning). Anything larger is treated as a misread.
+- D5: The engine interface is kept so PaddleOCR can be plugged in later without parser changes.
+- D6: **Delivery fees count as a service charge**, spread in proportion to what each person ordered — not shown as an item. Add delivery fee/charge (and platform/packaging/small-order fee) terms to the `service` entry in `lexicon.ts`, so they add to `serviceAmountCents`. Add a test where a service charge and a delivery fee appear together and reconcile. *Not yet implemented at handoff.*
+
+## Tasks
+1. **Verify the starting state.** Run `npx tsc --noEmit`, `npx vitest run`, `npx eslint src/lib/scan` and `npx vite build`.
+   - Finish the interrupted lint/format fix.
+   - Run Prettier on `src/lib/scan` only. Don't reformat other files: the repo's existing code already fails Prettier, so leave that alone.
+2. **Review the edge cases** below and add a synthetic test for each. Fix any that fail, in the responsible module only.
+   - A long receipt where a description wraps onto 3 lines.
+   - Two subtotals: the second one comes after the discount.
+   - A receipt with no item header that has an address line containing a price-like number.
+   - A delivery-app printout with a "Delivery fee" line (implement D6).
+   - "Total" printed in the footer after the payment lines.
+   - OCR text with `|` column separators.
+3. **Run a manual smoke test** with `npm run dev` on a synthetic image: render a fixture as text onto a canvas, or use a screenshot of typed text. Never use a real receipt.
+   - Check the loading, error, cancel and empty-result states.
+4. **Update the docs.**
+   - `AGENTS.md` (keep the LOVABLE block untouched) architecture section: paths are now `src/lib/scan/*`, with the engine interface and the pure/adapter split.
+   - `docs/MODULES.md`: module table, contracts and dependency direction.
+   - `docs/DECISIONS.md`: D1–D6, each with its reason.
+5. **Write the report** at `docs/reports/2026-11-receipt-scanner-rework.md`. It is the owner's record of what changed from the original. Sections:
+   1. Summary.
+   2. Before vs after, against `main`: file map, plus behaviour per receipt type in a table.
+   3. Changes inherited from `fix/receipt-ocr-recovery` vs new in this rework.
+   4. Decisions D1–D6.
+   5. Tests: which ran and their results.
+   6. Not verified, and known limitations. This must state that all tests use synthetic text and that accuracy on real photos is unmeasured; it also covers multi-currency, non-Latin scripts (only the `eng` model is loaded) and handwritten receipts.
+   7. Suggested next steps.
+   8. `git diff --stat main...rework/receipt-scanner`.
+6. **Commit and push.** Commit in small logical commits:
+   - module restructure;
+   - parser generalisation;
+   - tests;
+   - docs/report.
+
+   Then push `rework/receipt-scanner` and open a PR into `main` titled "Receipt scanner rework: modular pipeline, more receipt layouts". The PR body summarises the report and links to it. **Do not merge.**
+7. **Report back** with the PR link, the check results, and any decision that needs the owner.
+
+## Done when
+- All checks pass, and new scan files are lint-clean.
+- Every receipt type in `receipt-types.test.ts` reconciles to its printed total.
+- The report and docs are committed, and the PR is open and unmerged.

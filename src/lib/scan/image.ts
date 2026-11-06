@@ -46,32 +46,48 @@ export function flattenIllumination(src: Pixels, radius?: number): Pixels {
   return { data: out, width: w, height: h };
 }
 
-export interface Rect { x: number; y: number; width: number; height: number }
+export interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 function otsu(hist: Uint32Array, total: number): number {
   let sum = 0;
   for (let i = 0; i < 256; i++) sum += i * hist[i]!;
-  let sumB = 0, wB = 0, best = 0, thr = 128;
+  let sumB = 0,
+    wB = 0,
+    best = 0,
+    thr = 128;
   for (let t = 0; t < 256; t++) {
     wB += hist[t]!;
     if (wB === 0) continue;
     const wF = total - wB;
     if (wF === 0) break;
     sumB += t * hist[t]!;
-    const mB = sumB / wB, mF = (sum - sumB) / wF;
+    const mB = sumB / wB,
+      mF = (sum - sumB) / wF;
     const between = wB * wF * (mB - mF) ** 2;
-    if (between > best) { best = between; thr = t; }
+    if (between > best) {
+      best = between;
+      thr = t;
+    }
   }
   return thr;
 }
 
 /** Longest contiguous run of indices whose value passes `min`, tolerating short gaps. */
 function longestRun(frac: Float32Array, min: number, gap: number): [number, number] | null {
-  let best: [number, number] | null = null, start = -1, lastOk = -1;
+  let best: [number, number] | null = null,
+    start = -1,
+    lastOk = -1;
   for (let i = 0; i <= frac.length; i++) {
     const ok = i < frac.length && frac[i]! >= min;
-    if (ok) { if (start < 0) start = i; lastOk = i; }
-    else if (start >= 0 && (i - lastOk > gap || i === frac.length)) {
+    if (ok) {
+      if (start < 0) start = i;
+      lastOk = i;
+    } else if (start >= 0 && (i - lastOk > gap || i === frac.length)) {
       if (!best || lastOk - start > best[1] - best[0]) best = [start, lastOk];
       start = -1;
     }
@@ -86,30 +102,41 @@ function longestRun(frac: Float32Array, min: number, gap: number): [number, numb
 export function detectPaperBounds(src: Pixels): Rect | null {
   const { width: w, height: h, data } = src;
   const step = Math.max(1, Math.round(Math.max(w, h) / 400));
-  const sw = Math.floor(w / step), sh = Math.floor(h / step);
+  const sw = Math.floor(w / step),
+    sh = Math.floor(h / step);
   const g = new Uint8Array(sw * sh);
   const hist = new Uint32Array(256);
-  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
-    const p = (y * step * w + x * step) * 4;
-    const v = Math.round(0.299 * data[p]! + 0.587 * data[p + 1]! + 0.114 * data[p + 2]!);
-    g[y * sw + x] = v;
-    hist[v]!++;
-  }
+  for (let y = 0; y < sh; y++)
+    for (let x = 0; x < sw; x++) {
+      const p = (y * step * w + x * step) * 4;
+      const v = Math.round(0.299 * data[p]! + 0.587 * data[p + 1]! + 0.114 * data[p + 2]!);
+      g[y * sw + x] = v;
+      hist[v]!++;
+    }
   const thr = otsu(hist, sw * sh);
   const cols = new Float32Array(sw);
-  for (let x = 0; x < sw; x++) { let c = 0; for (let y = 0; y < sh; y++) if (g[y * sw + x]! > thr) c++; cols[x] = c / sh; }
+  for (let x = 0; x < sw; x++) {
+    let c = 0;
+    for (let y = 0; y < sh; y++) if (g[y * sw + x]! > thr) c++;
+    cols[x] = c / sh;
+  }
   const cr = longestRun(cols, 0.5, Math.ceil(sw * 0.02));
   if (!cr) return null;
   const rows = new Float32Array(sh);
   const cw = cr[1] - cr[0] + 1;
-  for (let y = 0; y < sh; y++) { let c = 0; for (let x = cr[0]; x <= cr[1]; x++) if (g[y * sw + x]! > thr) c++; rows[y] = c / cw; }
+  for (let y = 0; y < sh; y++) {
+    let c = 0;
+    for (let x = cr[0]; x <= cr[1]; x++) if (g[y * sw + x]! > thr) c++;
+    rows[y] = c / cw;
+  }
   const rr = longestRun(rows, 0.3, Math.ceil(sh * 0.06));
   if (!rr) return null;
   const pad = Math.round(Math.max(w, h) * 0.015);
-  const x0 = Math.max(0, cr[0] * step - pad), x1 = Math.min(w, (cr[1] + 1) * step + pad);
-  const y0 = Math.max(0, rr[0] * step - pad), y1 = Math.min(h, (rr[1] + 1) * step + pad);
+  const x0 = Math.max(0, cr[0] * step - pad),
+    x1 = Math.min(w, (cr[1] + 1) * step + pad);
+  const y0 = Math.max(0, rr[0] * step - pad),
+    y1 = Math.min(h, (rr[1] + 1) * step + pad);
   const area = ((x1 - x0) * (y1 - y0)) / (w * h);
   if (area < 0.15 || area > 0.92) return null;
   return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
 }
-

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseReceiptText, scoreParse, splitItemLabel } from "./parser";
-import { computeTotals } from "./bill";
+import { parseReceiptText, scoreParse, splitItemLabel } from "./parse";
+import { computeTotals } from "../bill";
 
 /**
  * Representative OCR output for a GST-inclusive Singapore restaurant receipt with a separate Qty
@@ -51,16 +51,27 @@ describe("parser: GST-inclusive receipt with Qty column", () => {
   it("infers inclusive tax from arithmetic and reconciles with no GST added again", () => {
     expect(r.gstInclusive).toBe(true);
     const t = computeTotals(r);
-    expect(t.ok && t.value).toMatchObject({ itemSubtotalCents: 4400, gstAddedCents: 0, gstIncludedCents: 363, totalCents: 4400, mismatchCents: 0 });
+    expect(t.ok && t.value).toMatchObject({
+      itemSubtotalCents: 4400,
+      gstAddedCents: 0,
+      gstIncludedCents: 363,
+      totalCents: 4400,
+      mismatchCents: 0,
+    });
     expect(r.uncertainFields).not.toContain("charges");
   });
 });
 
 describe("parser: tax inclusivity is never inferred from item markers alone", () => {
   it("treats tax as added when items sum to subtotal and subtotal + tax = total", () => {
-    const { receipt: r } = parseReceiptText(`Shop\nProduct Qty Total\nTEA(GST*) 1 $5.00\nSubtotal $5.00\nGST 9% $0.45\nTotal $5.45`);
+    const { receipt: r } = parseReceiptText(
+      `Shop\nProduct Qty Total\nTEA(GST*) 1 $5.00\nSubtotal $5.00\nGST 9% $0.45\nTotal $5.45`,
+    );
     expect(r.gstInclusive).toBe(false);
-    expect(computeTotals(r).ok && (computeTotals(r) as { value: { mismatchCents: number } }).value.mismatchCents).toBe(0);
+    expect(
+      computeTotals(r).ok &&
+        (computeTotals(r) as { value: { mismatchCents: number } }).value.mismatchCents,
+    ).toBe(0);
   });
   it("flags ambiguity when the numbers fit neither interpretation (misread subtotal)", () => {
     const { receipt: r } = parseReceiptText(INCLUSIVE.replace("$40.37", "$31.11"));
@@ -76,12 +87,22 @@ describe("parser: tax inclusivity is never inferred from item markers alone", ()
 
 describe("parser: items are not dropped silently", () => {
   it("keeps an item-section line whose price was lost, with null price and flagged", () => {
-    const { receipt: r, warnings } = parseReceiptText(`Shop\nProduct Qty Total\nSHARED FLATBREAD(GST#) 2\nSIMPLE FLATBREAD(GST*) 1 $3.00\nAmount $9.00`);
-    expect(r.items.map((i) => [i.description, i.quantity, i.lineTotalCents, i.flagged])).toEqual([["SHARED FLATBREAD", 2, null, true], ["SIMPLE FLATBREAD", 1, 300, false]]);
+    const { receipt: r, warnings } = parseReceiptText(
+      `Shop\nProduct Qty Total\nSHARED FLATBREAD(GST#) 2\nSIMPLE FLATBREAD(GST*) 1 $3.00\nAmount $9.00`,
+    );
+    expect(r.items.map((i) => [i.description, i.quantity, i.lineTotalCents, i.flagged])).toEqual([
+      ["SHARED FLATBREAD", 2, null, true],
+      ["SIMPLE FLATBREAD", 1, 300, false],
+    ]);
     expect(warnings.join(" ")).toMatch(/without a price/);
   });
   it("reads OCR 'I' in the qty column as 1 but flags it", () => {
-    expect(splitItemLabel("LIME JUICE(GST#) I")).toMatchObject({ desc: "LIME JUICE", quantity: 1, qtyUncertain: true, taxMarked: true });
+    expect(splitItemLabel("LIME JUICE(GST#) I")).toMatchObject({
+      desc: "LIME JUICE",
+      quantity: 1,
+      qtyUncertain: true,
+      taxMarked: true,
+    });
   });
 });
 
@@ -92,4 +113,3 @@ describe("scoreParse", () => {
     expect(scoreParse(good)).toBeGreaterThan(scoreParse(bad));
   });
 });
-
