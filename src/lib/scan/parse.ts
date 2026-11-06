@@ -13,6 +13,7 @@ import { emptyReceipt } from "../defaults";
 import type { Receipt, ReceiptItem } from "../types";
 import { readItemRow, letterCount, splitItemLabel } from "./items";
 import {
+  ADDRESS,
   classifyLabel,
   INCLUSIVE_NOTE,
   ITEM_HEADER,
@@ -51,10 +52,14 @@ const SUMMARY: ReadonlySet<LineKind> = new Set([
 ]);
 const MAX_ROUNDING = 5; // cents; cash rounding beyond this is treated as a misread
 
-/** Collapses runs of spaces but keeps a two-space column gap. */
+/**
+ * Collapses runs of spaces but keeps a two-space column gap. A "|" with space (or the line edge)
+ * on both sides is a column separator; a "|" touching a digit is left for OCR digit repair.
+ */
 export function normaliseLine(l: string): string {
   return l
     .replace(/\t/g, "  ")
+    .replace(/(^|\s)[|¦](?=\s|$)/g, "$1  ")
     .split(/ {2,}/)
     .map((part) => part.replace(/\s+/g, " ").trim())
     .filter(Boolean)
@@ -69,6 +74,9 @@ export function cleanLabel(label: string): string {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+/** A description that stops on a joining word or comma continues on the next line. */
+const OPEN_END = /(?:[,&+/]|\b(?:with|and|of|w\/|dan|dengan|und|mit|et|avec|con|met))$/i;
 
 function isWordy(l: string): boolean {
   const letters = letterCount(l);
@@ -136,11 +144,22 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
   let subtotalSeen = false;
   let pendingName: string | null = null;
   let pendingKind: LineKind | null = null;
+  /** Leading lines of a description that wraps onto the priced line below. */
+  let wrapPrefix: string[] = [];
+  /** Item on the line above whose description is cut off and continues on this line. */
+  let openItem: ReceiptItem | null = null;
   let section: Section = hasItemHeader ? "header" : "items";
   const last = () => items[items.length - 1];
 
+  const dropPrefix = () => {
+    if (wrapPrefix.length) skipped.push(wrapPrefix.join(" "));
+    wrapPrefix = [];
+  };
+
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i]!;
+    const continues: ReceiptItem | null = openItem;
+    openItem = null;
     if (INCLUSIVE_NOTE.test(l.text) && !l.amounts.length) r.gstInclusive = true;
     if (section === "header" && ITEM_HEADER.test(l.text) && !l.amounts.length) {
       section = "items";
@@ -151,26 +170,44 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
       continue;
     }
     if (/^[-=_*.~#\s]+$/.test(l.text)) continue;
+    // Shop address above the first item ("Unit 3.12", "#02-15", "Singapore 123456").
+    if (!items.length && section !== "summary" && section !== "footer" && ADDRESS.test(l.text))
+      continue;
 
     // ---- Lines without an amount ----------------------------------------------------------
     if (!l.amounts.length) {
       if (l.kind && SUMMARY.has(l.kind)) {
+        dropPrefix();
         pendingKind = l.kind;
         continue;
       } // amount on the next line
       if (l.kind === "payment") {
+        dropPrefix();
         if (totals.length) section = "footer";
         continue;
       }
       if (section !== "items") continue;
-      const s = splitItemLabel(l.label);
-      if (letterCount(s.desc) < 2) continue;
-      if (isDetailRow(lines[i + 1])) {
-        pendingName = l.label;
+      if (letterCount(splitItemLabel(l.label).desc) < 2) continue;
+      const open = OPEN_END.test(l.label);
+      if (continues && continues === last()) {
+        // Wrapped description: the item above ended on a joining word, so this line continues it.
+        continues.description = `${continues.description} ${l.label}`.slice(0, 80);
+        if (open) openItem = continues;
         continue;
       }
-      if (MODIFIER.test(l.label) && last()) {
-        appendNote(last()!, l.label);
+      if (open && !isDetailRow(lines[i + 1])) {
+        wrapPrefix.push(l.label); // the description goes on below; the price comes later
+        continue;
+      }
+      const label = [...wrapPrefix, l.label].join(" ");
+      wrapPrefix = [];
+      const s = splitItemLabel(label);
+      if (isDetailRow(lines[i + 1])) {
+        pendingName = label;
+        continue;
+      }
+      if (MODIFIER.test(label) && last()) {
+        appendNote(last()!, label);
         continue;
       }
       if (s.taxMarked || (hasItemHeader && /\s\d{1,2}$/.test(l.label))) {
@@ -195,6 +232,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
     let kind = l.kind;
     if (pendingKind && !kind && letterCount(l.label) < 2) kind = pendingKind;
     pendingKind = null;
+    if (kind) dropPrefix();
 
     // A free option under an item ("- Less sugar 0.00") is a note, not a discount or a new item.
     if (amt.cents === 0 && (kind === null || kind === "discount") && section === "items") {
@@ -209,7 +247,8 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
         section = "summary";
         continue;
       case "service": {
-        serviceAmt = (serviceAmt ?? 0) + amt.cents;
+        // Fees add up (D6); a negative line such as "Delivery Discount -1.00" reduces them.
+        serviceAmt = (serviceAmt ?? 0) + (amt.negative ? -amt.cents : amt.cents);
         const bp = findRateBp(l.label);
         if (bp !== null) r.serviceRateBp = bp;
         section = "summary";
@@ -267,6 +306,10 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
       if (s.quantity > 1 && row.quantity === 1) row.quantity = s.quantity;
     }
     pendingName = null;
+    if (wrapPrefix.length) {
+      row.desc = [...wrapPrefix, row.desc].join(" ").slice(0, 80);
+      wrapPrefix = [];
+    }
     if (row.taxMarked) anyTaxMarked = true;
 
     const prev = last();
@@ -277,14 +320,17 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
       continue;
     }
     if (amt.cents === 0) continue;
-    items.push({
+    const item: ReceiptItem = {
       id: newId("i"),
       description: row.desc,
       quantity: row.quantity,
       lineTotalCents: row.lineTotalCents,
       flagged: row.uncertain,
-    });
+    };
+    items.push(item);
+    if (OPEN_END.test(row.desc)) openItem = item;
   }
+  dropPrefix();
 
   function addDiscount(cents: number, label: string) {
     const prev = items[items.length - 1];

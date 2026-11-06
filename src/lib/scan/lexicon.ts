@@ -45,9 +45,11 @@ const R: Array<[LineKind, RegExp]> = [
     "tax",
     /^(?:total\s*)?(?:gst|vat|tax|sst|pb\s*1|ppn|cukai|mwst|ust|tva|iva|btw|sales\s*tax|service\s*tax|local\s*tax|city\s*tax|state\s*tax|consumption\s*tax)\b|^(?:(?:incl(?:usive|udes?|uded|\.)?|inkl\.?)\s*(?:of\s*)?)(?:\d{1,2}(?:[.,]\d+)?\s*%\s*)?(?:gst|vat|tax|sst|mwst|tva|iva|btw)\b|^(?:tax|gst|vat)\s*(?:total|amount|amt)\b/i,
   ],
+  // Delivery, platform, packaging and small-order fees count as a service charge (decision D6):
+  // they are spread in proportion to what each person ordered, never shown as an item.
   [
     "service",
-    /^(?:service(?:\s*(?:charge|chg|fee))?|svc(?:\s*chg)?|s\/?c|svr\s*chg|srv\s*chg|sc|gratuity|tip|caj\s*perkhidmatan|biaya\s*layanan|servis|service\s*compris|servizio|coperto|bedienung)\b/i,
+    /^(?:service(?:\s*(?:charge|chg|fee))?|svc(?:\s*chg)?|s\/?c|svr\s*chg|srv\s*chg|sc|gratuity|tip|caj\s*perkhidmatan|biaya\s*layanan|servis|service\s*compris|servizio|coperto|bedienung|delivery(?:\s*(?:fee|charge|chg))?|(?:platform|packaging|packing|small[\s-]*order|booking)\s*(?:fee|charge|chg)|caj\s*penghantaran|biaya\s*(?:pengiriman|antar|kemasan)|ongkos\s*kirim|ongkir|liefergeb(?:ü|ue)hr|frais\s*de\s*livraison|gastos\s*de\s*env(?:í|i)o|costo\s*di\s*consegna|bezorgkosten)\b/i,
   ],
   [
     "discount",
@@ -136,6 +138,13 @@ export const MODIFIER =
 /** Header lines that are never the merchant name. */
 export const NOT_MERCHANT =
   /^(?:table|tbl|final\s*receipt|receipt|tax\s*invoice|invoice|simplified\s*tax|bill|order|cashier|waiter|server|date|time|tel|phone|gst\s*reg|uen|copy|reprint|welcome|thank|duplicate|customer|dine\s*in|take\s*away|takeaway|pax|check)/i;
+
+/**
+ * Address details printed in the header: unit/block numbers, street types, postcodes. Used only
+ * before the first item, so a product such as "Singapore Sling" is never affected.
+ */
+export const ADDRESS =
+  /#\s?\d{1,3}-\d{1,5}\b|\b(?:blk|block)\s*\d|\b(?:unit|level|lvl|lot|suite)\s*#?\d|\b(?:singapore|s)\s*\(?\d{6}\)?(?!\S)|\b\d{1,5}[a-z]?,?\s+(?:\p{L}+\s+){0,3}(?:road|rd|street|st|avenue|ave|drive|dr|lane|ln|crescent|cres|boulevard|blvd|place|pl|way)\b|\b(?:jalan|jln|lorong|lor|persiaran|taman|stra(?:ß|ss)e|rue|calle|via)\s+\p{L}/iu;
 
 /** Weighed goods: "0.512 kg", "1,25 kg", "350 g". */
 export const WEIGHT = /\d+(?:[.,]\d{1,3})?\s?(?:kg|g|lb|lbs|oz|l|ml)\b/i;
