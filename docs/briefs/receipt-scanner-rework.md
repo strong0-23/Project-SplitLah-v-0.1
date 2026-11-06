@@ -109,6 +109,16 @@ The parser also handles:
 - Every receipt type in `receipt-types.test.ts` reconciles to its printed total.
 - The report and docs are committed, and the PR is open and unmerged.
 
+### Batch 1 owner review (6 Nov 2026), PR #2
+- **Approved:** the optional `printedNetSubtotalCents` field in `Receipt` and `storage.ts`, inherited from `fix/receipt-ocr-recovery`. It is backward-compatible.
+- **Follow-up task 1a**, on `rework/receipt-scanner` before merge:
+  - When a scanned receipt's service amount includes delivery/platform/packaging/small-order fees, show a one-line warning if the user switches charges to "Calculate by %". Suggested wording: "Your receipt's delivery/platform fees will drop out if you calculate by %."
+  - Record which fee lines were folded in. Use a non-persisted flag, or one derived from `ocrWarnings`; **no schema change**.
+  - Add a UI test that shows the warning appears.
+  - Update the Batch 1 report with a short addendum section.
+  - Push to the same PR. Do not merge.
+- **Merge gate (owner):** after 1a, the owner runs the branch locally (`npm run dev -- --host`, phone on the same Wi-Fi) and scans 2–3 familiar development receipts. The owner merges PR #2 only if they look right. Claude Code does not merge.
+
 ## Batch 2: shared parser, then the engine decision
 
 **Purpose:** pick Tesseract or PaddleOCR on evidence. Both run on the device; no VLM or API calls. Both engines run on the same rework parser, so the comparison measures the engine alone.
@@ -140,7 +150,18 @@ The parser also handles:
    - cancel and timeout;
    - releasing resources;
    - word boxes coming back in the same format.
-5. **Report:** write `docs/reports/2026-11-paddle-adapter.md`, covering the SDK and version, download sizes, bundle impact, the contract-test results and any browser limits found.
+5. **Self-host the model files for both engines** (approved by the owner on 6 Nov 2026).
+   - Serve Tesseract's worker, core and `eng` traineddata, and Paddle's models, from the app's own static assets instead of jsDelivr or other CDNs, at pinned versions.
+   - Cache them so they download once, then work offline.
+   - Report the added deploy size.
+   - Confirm that scanning still works with jsDelivr blocked.
+6. **Report:** write `docs/reports/2026-11-paddle-adapter.md`, covering:
+   - the SDK and its version;
+   - download sizes;
+   - bundle impact;
+   - model self-hosting;
+   - contract-test results;
+   - any browser limits found.
 
 ### Phase 2c: comparison run (owner-gated)
 1. **Gate:** start only after the owner confirms the four development reference drafts are verified, with currency and complete item lists, and explicitly authorises the held-out run.
