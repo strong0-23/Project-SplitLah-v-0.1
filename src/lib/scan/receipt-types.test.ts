@@ -293,3 +293,170 @@ describe("OCR noise", () => {
     expect(r.gstAmountCents).toBe(18);
   });
 });
+
+describe("long receipt: descriptions wrapped over 3 lines", () => {
+  const T = `SAMPLE KITCHEN
+Item                        Qty   Amount
+Chicken Rice                 1     5.50
+Signature Seafood Platter with
+Grilled Prawns, Squid and
+Garlic Butter Sauce          1    38.00
+Iced Water                   2     1.00
+Nasi Lemak Special with      1    12.50
+Fried Chicken, Egg and
+Sambal Prawns
+Kaya Toast                   2     4.40
+Soft Boiled Eggs             2     3.00
+Teh Tarik                    3     6.30
+Fishball Noodles             1     6.80
+Wanton Mee                   1     7.20
+Barley Drink                 2     3.60
+Subtotal                          88.30
+GST 9%                             7.95
+Total                             96.25`;
+  it("joins each wrapped description into one item and reconciles", () => {
+    expect(rows(T)).toEqual([
+      ["Chicken Rice", 1, 550],
+      ["Signature Seafood Platter with Grilled Prawns, Squid and Garlic Butter Sauce", 1, 3800],
+      ["Iced Water", 2, 100],
+      ["Nasi Lemak Special with Fried Chicken, Egg and Sambal Prawns", 1, 1250],
+      ["Kaya Toast", 2, 440],
+      ["Soft Boiled Eggs", 2, 300],
+      ["Teh Tarik", 3, 630],
+      ["Fishball Noodles", 1, 680],
+      ["Wanton Mee", 1, 720],
+      ["Barley Drink", 2, 360],
+    ]);
+    expect(mismatch(T)).toBe(0);
+  });
+});
+
+describe("two subtotals: the second comes after the discount", () => {
+  const T = `SAMPLE GRILL
+Burger                 18.00
+Fries                   6.00
+Cola                    4.00
+Subtotal               28.00
+Discount 10%           -2.80
+Subtotal               25.20
+Service Charge 10%      2.52
+GST 9%                  2.49
+Total                  30.21`;
+  it("keeps the first subtotal, applies the discount once and reconciles", () => {
+    const { receipt: r } = parseReceiptText(T);
+    expect(r.printedSubtotalCents).toBe(2800);
+    expect(r.discountCents).toBe(280);
+    expect([r.serviceAmountCents, r.gstAmountCents, r.receiptTotalCents]).toEqual([252, 249, 3021]);
+    expect(r.uncertainFields).not.toContain("charges");
+    expect(mismatch(T)).toBe(0);
+  });
+});
+
+describe("no item header: address lines with price-like numbers", () => {
+  const T = `CORNER BAKERY
+Unit 3.12, Sample Mall
+Blk 88 Sample Road #02-15
+Singapore 123456
+Sourdough Loaf      7.50
+Cinnamon Roll       3.80
+TOTAL              11.30`;
+  it("never reads the address as an item", () => {
+    const { receipt: r, warnings } = parseReceiptText(T);
+    expect(r.merchant).toBe("CORNER BAKERY");
+    expect(rows(T)).toEqual([
+      ["Sourdough Loaf", 1, 750],
+      ["Cinnamon Roll", 1, 380],
+    ]);
+    expect(warnings.join(" ")).not.toMatch(/Lines not used/);
+    expect(mismatch(T)).toBe(0);
+  });
+});
+
+describe("delivery app printout: delivery and platform fees (D6)", () => {
+  const T = `FOODDASH
+Order Summary
+Order # D-48213
+1x Chicken Rice          5.50
+2x Iced Milo             5.00
+1x Fried Wings           8.00
+Subtotal                18.50
+Delivery Fee             3.99
+Delivery Discount       -1.00
+Platform Fee             0.40
+Total                   21.89
+Paid by Card            21.89`;
+  it("counts the fees as a service charge, not as items", () => {
+    const { receipt: r } = parseReceiptText(T);
+    expect(rows(T)).toEqual([
+      ["Chicken Rice", 1, 550],
+      ["Iced Milo", 2, 500],
+      ["Fried Wings", 1, 800],
+    ]);
+    expect([r.serviceEnabled, r.serviceAmountCents]).toEqual([true, 339]);
+    expect(mismatch(T)).toBe(0);
+  });
+
+  const T2 = `SAMPLE THAI KITCHEN
+Pad Thai             2    24.00
+Green Curry          1    15.00
+Subtotal                  39.00
+Service Charge 10%         3.90
+Delivery Charge            5.00
+Packaging Fee              0.60
+GST 9%                     4.37
+Total                     52.87`;
+  it("adds a service charge and a delivery fee together and reconciles", () => {
+    const { receipt: r } = parseReceiptText(T2);
+    expect(r.items.map((i) => i.description)).toEqual(["Pad Thai", "Green Curry"]);
+    expect([r.serviceAmountCents, r.gstAmountCents, r.gstInclusive]).toEqual([950, 437, false]);
+    expect(r.uncertainFields).not.toContain("charges");
+    expect(mismatch(T2)).toBe(0);
+  });
+
+  it("does not read a product named after a fee word as a charge", () => {
+    expect(rows(`SHOP\nDelivery Box Set  12.00\nTOTAL 12.00`)).toEqual([
+      ["Delivery Box Set", 1, 1200],
+    ]);
+  });
+});
+
+describe("a Total printed in the footer after the payment lines", () => {
+  const T = `SAMPLE CAFE
+Flat White           5.50
+Muffin               4.00
+Subtotal             9.50
+GST 9%               0.86
+Total               10.36
+CASH                20.00
+CHANGE               9.64
+** Customer Copy **
+TOTAL               20.00`;
+  it("uses the last total before payment", () => {
+    const { receipt: r } = parseReceiptText(T);
+    expect(r.receiptTotalCents).toBe(1036);
+    expect(mismatch(T)).toBe(0);
+  });
+});
+
+describe("OCR text with | column separators", () => {
+  const T = `| SAMPLE DINER |
+| Item          | Qty | Amount |
+| Chicken Chop  |  1  |  14.50 |
+| Iced Tea      |  2  |   5.00 |
+| Subtotal      |     |  19.50 |
+| GST 9%        |     |   1.76 |
+| Total         |     |  21.26 |`;
+  it("treats spaced pipes as column gaps, not digits", () => {
+    const { receipt: r } = parseReceiptText(T);
+    expect(r.merchant).toBe("SAMPLE DINER");
+    expect(rows(T)).toEqual([
+      ["Chicken Chop", 1, 1450],
+      ["Iced Tea", 2, 500],
+    ]);
+    expect(r.gstAmountCents).toBe(176);
+    expect(mismatch(T)).toBe(0);
+  });
+  it("still reads a pipe touching a digit as OCR noise for 1", () => {
+    expect(rows(`SHOP\nNoodles  |2.50\nTOTAL 12.50`)).toEqual([["Noodles", 1, 1250]]);
+  });
+});
