@@ -479,3 +479,156 @@ describe("OCR text with | column separators", () => {
     expect(rows(`SHOP\nNoodles  |2.50\nTOTAL 12.50`)).toEqual([["Noodles", 1, 1250]]);
   });
 });
+
+/*
+ * Batch 1b: one synthetic fixture per real-receipt failure pattern P1–P5 (owner PC test,
+ * 7 Nov 2026). Written from the pattern descriptions only, with invented names and amounts.
+ */
+describe("P1: summary/footer lines and a price-lost item are never notes on another item", () => {
+  const T = `GREEN LEAF GROCER
+Description              Qty   Amount
+SPARKLING WATER           2     3.60
+WHOLEMEAL LOAF
+SEA SALT CRISPS           1     2.95
+Subtotal                        9.75
+Total (SGD) incl. GST
+9.75
+Transaction No 004127
+Transaction Date 06/11/2026 19:42`;
+  it("keeps item names clean and the price-lost item as its own flagged row", () => {
+    const { receipt: r } = parseReceiptText(T);
+    expect(rows(T)).toEqual([
+      ["SPARKLING WATER", 2, 360],
+      ["WHOLEMEAL LOAF", 1, null],
+      ["SEA SALT CRISPS", 1, 295],
+    ]);
+    expect(r.items[1]!.flagged).toBe(true);
+    expect(r.receiptTotalCents).toBe(975);
+  });
+  it("reconciles once the user enters the missing price", () => {
+    const { receipt: r } = parseReceiptText(T);
+    r.items[1]!.lineTotalCents = 320;
+    const c = computeTotals(r);
+    expect(c.ok && c.value.mismatchCents).toBe(0);
+  });
+  it("still attaches a real add-on, and nothing else, to the item above", () => {
+    expect(rows(`CAFE\nItem Qty Amount\nLATTE 1 6.00\n+ Oat milk\nThank you\nTotal 6.00`)).toEqual([
+      ["LATTE (Oat milk)", 1, 600],
+    ]);
+  });
+});
+
+describe("P2: bare numbers and OCR tokens are not quantities", () => {
+  const T = `FRESH MART
+BABY SPINACH PW 4         2.50
+GREEK YOGHURT % 8         4.20
+TOTAL                     6.70`;
+  it("keeps quantity 1 and flags rows whose trailing number has no Qty column", () => {
+    const { receipt: r } = parseReceiptText(T);
+    expect(rows(T)).toEqual([
+      ["BABY SPINACH PW 4", 1, 250],
+      ["GREEK YOGHURT % 8", 1, 420],
+    ]);
+    expect(r.items.every((i) => i.flagged)).toBe(true);
+    expect(mismatch(T)).toBe(0);
+  });
+  const C = `EXAMPLE CINEMA
+Description        Qty   Amount
+NIGHT SHOW (Adult)
+2                       24.00
+Grand Total (INCL GST)  24.00
+Credit                  24.00`;
+  it("reads a ticket's quantity from its own quantity-and-amount row", () => {
+    expect(rows(C)).toEqual([["NIGHT SHOW (Adult)", 2, 2400]]);
+    expect(mismatch(C)).toBe(0);
+  });
+});
+
+describe("P3: an item discount repeated in the summary is counted once", () => {
+  const T = `SAMPLE PHARMACY
+VITAMIN C 1000MG          18.90
+  MEMBER DISC             -2.00
+HAND CREAM                 7.50
+SUBTOTAL                  24.40
+DISCOUNT                  -2.00
+TOTAL SAVINGS              2.00
+TOTAL                     24.40
+NETS                      24.40`;
+  it("keeps the item-level discount and does not deduct the repeat again", () => {
+    const { receipt: r, warnings } = parseReceiptText(T);
+    expect(rows(T)).toEqual([
+      ["VITAMIN C 1000MG (MEMBER DISC -2.00)", 1, 1690],
+      ["HAND CREAM", 1, 750],
+    ]);
+    expect(r.discountCents).toBe(0);
+    expect(warnings.join(" ")).toMatch(/repeats the item discounts above/);
+    expect(r.uncertainFields).not.toContain("discount");
+    expect(mismatch(T)).toBe(0);
+  });
+});
+
+describe("P4: an OCR-damaged total label and a total with its decimal point lost", () => {
+  const T = `NOODLE BAR
+Item               Qty   Amount
+DRY MEE POK         2    11.00
+FISHBALL SOUP       1     6.50
+ICED LEMON TEA      2     5.00
+Subtotal                 22.50
+GST 9%                    2.03
+T0TAL                    2453`;
+  it("never reads the total row as an item and accepts 24.53 only because it reconciles", () => {
+    const { receipt: r, warnings } = parseReceiptText(T);
+    expect(r.items.map((i) => i.description)).toEqual([
+      "DRY MEE POK",
+      "FISHBALL SOUP",
+      "ICED LEMON TEA",
+    ]);
+    expect(r.receiptTotalCents).toBe(2453);
+    expect(r.uncertainFields).toContain("total");
+    expect(warnings.join(" ")).toMatch(/no decimal point/);
+    expect(mismatch(T)).toBe(0);
+  });
+  it("keeps the total as not found when the damaged number doesn't reconcile", () => {
+    const { receipt: r } = parseReceiptText(T.replace("2453", "2455"));
+    expect(r.receiptTotalCents).toBeNull();
+  });
+  it("reads OCR-confused total labels (TOTA1, T0TAL) as the total", () => {
+    const { receipt: r } = parseReceiptText(`SHOP\nSOAP 4.00\nTOTA1 4.00`);
+    expect([r.items.length, r.receiptTotalCents]).toEqual([1, 400]);
+  });
+});
+
+describe("P5: a GST or service amount that doesn't match its rate is flagged, never changed", () => {
+  const T = `SAMPLE CAFE
+Item               Qty   Amount
+FLAT WHITE          2    11.00
+AVOCADO TOAST       1    16.50
+GRANOLA BOWL        2    25.80
+CHAI LATTE          3    15.10
+Subtotal                 68.40
+GST 9%                    6.18
+Total                    74.58`;
+  it("flags GST 6.18 where 9% of 68.40 is 6.16, and shows the expected value", () => {
+    const { receipt: r, warnings } = parseReceiptText(T);
+    expect(r.gstAmountCents).toBe(618);
+    expect(r.uncertainFields).toContain("charges");
+    expect(warnings.join(" ")).toMatch(/GST is printed as 6\.18, but 9% of 68\.40 is 6\.16/);
+    expect(mismatch(T)).toBe(0); // it still reconciles to the printed total
+  });
+  it("does not flag a GST amount that matches its rate", () => {
+    const { receipt: r } = parseReceiptText(T.replace("6.18", "6.16").replace("74.58", "74.56"));
+    expect(r.uncertainFields).not.toContain("charges");
+  });
+  it("flags a service charge that doesn't match its printed rate", () => {
+    const S = T.replace(
+      "GST 9%                    6.18\nTotal                    74.58",
+      "Service Charge 10%        6.85\nTotal                    75.25",
+    );
+    const { receipt: r, warnings } = parseReceiptText(S);
+    expect(r.serviceAmountCents).toBe(685);
+    expect(warnings.join(" ")).toMatch(
+      /Service charge is printed as 6\.85, but 10% of 68\.40 is 6\.84/,
+    );
+    expect(r.uncertainFields).toContain("charges");
+  });
+});
