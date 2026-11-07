@@ -166,3 +166,31 @@ Full text and reasons are in [`docs/DECISIONS.md`](../DECISIONS.md).
  src/lib/types.ts                               |   3 +
  28 files changed, 3170 insertions(+), 192 deletions(-)
 ```
+
+## Addendum (7 Nov 2026): owner review follow-up 1a
+
+**Owner review of PR #2.** The optional `printedNetSubtotalCents` field (inherited from `fix/receipt-ocr-recovery`) is approved. Task 1a was requested before merge.
+
+**What changed**
+- **Fee lines are recorded.** When the parser folds a delivery, platform, packaging, small-order or booking fee into the service amount (D6), it adds a scan warning that lists them. For example: "Delivery/platform fees are included in the service charge: Delivery Fee 3.99, Platform Fee 0.40." The warning goes first in the list, so the 20-warning storage cap keeps it.
+- **No schema change.** The record lives in the existing `ocrWarnings`. The review screen checks it with `hasFoldedFees(ocrWarnings)`, a pure helper exported from `@/lib/scan` that looks for the fixed prefix `FOLDED_FEES_NOTE`.
+- **Review warning.** While "Calculate by %" is selected on such a receipt, the review screen shows: "Your receipt's delivery/platform fees will drop out if you calculate by %." It disappears when switching back to "Amounts on receipt". Receipts whose service amount is only a service charge never show it.
+- **Single source for fee terms.** The fee terms now live once in `lexicon.ts` (`FEE_TERMS`). Both the `service` classifier and the new `FEE` pattern use them, so they cannot drift apart. The list of terms is unchanged.
+- **Files:** `lexicon.ts`, `parse.ts`, `index.ts`, `ReviewStep.tsx` (one derived flag and one notice), and the new `ReviewStep.test.tsx`.
+
+**Tests (run 7 Nov 2026)**
+
+| Check | Result |
+|---|---|
+| `npx tsc --noEmit` | ✅ clean |
+| `npx vitest run` | ✅ 77/77 passed in 7 files (73 before + 4 new) |
+| New parser tests | The fee note lists exactly the folded lines (the fee discount is not listed); both delivery fixtures are detected; a service-charge-only receipt is not |
+| New UI test (`ReviewStep.test.tsx`) | Renders the real review screen with a scanned synthetic delivery receipt. The warning is absent in "Amounts on receipt", appears after clicking "Calculate by %", and goes away when switching back. A second case checks it never appears for a receipt without fees. Reverting the `ReviewStep` change makes this test fail, so it does detect a regression. |
+| `npx eslint` + `prettier --check` on `src/lib/scan` and the new test | ✅ clean |
+| `npx vite build` | ✅ succeeded |
+
+`ReviewStep.tsx` was not Prettier-formatted before this work (60 existing complaints). The new notice line follows the file's existing one-line style (61 now), and the rest of the file was left unformatted, as the brief asks.
+
+**Still open:** the stored service *rate* is unchanged when fees are folded in. The warning tells the user rather than changing the rate. The browser smoke test in §5 was not re-run for this change; the UI test covers the new warning.
+
+The diff stat in §8 is from the original Batch 1 commit and does not include this addendum.
