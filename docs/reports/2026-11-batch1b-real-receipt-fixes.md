@@ -179,3 +179,46 @@ Scoring notes:
 
   `npx vitest run`: 205/205.
 - **Rounding allocation:** deferred; D4 stays (split on the unrounded total).
+
+## Addendum (8 Nov 2026): owner reference format in the harness
+
+**Supersedes the §6 run instructions.** The harness now reads the owner's verified reference format (`tools/receipt-regression/reference-format/`: blank template + contract).
+
+- **Default source:** "Owner references (Browser OCR)". You pick the photos folder (`development-working`) and the references folder (`owner-worksheet/reference-versions`) separately.
+- **Pairing:** files pair by REG id. Only `REGnnn.jpg/png/webp` is read from the photos folder; the older `*.reference.private.json` there are ignored and never opened. If an id has several reference versions, the highest `owner-inventory-vN` is used and named in the summary. Unpaired ids are listed and not run.
+- **Refusal:** every paired reference is validated with the unchanged contract (`validateReference`). If any reference fails, isn't valid JSON, or has a known `receipt_id` that doesn't match its file name, the run is refused before any OCR. The status lists `REG00n: <path> <code>`, with no values.
+- **Scoring:** only fields with state `known` count; every other state is unscored (`unknownReferenceCredit: false`). README "How the verified references are scored" gives the full mapping.
+- **Two fairness rules:**
+  - an item discount scores the same whether a parser takes it off the item (D2) or puts it on the bill;
+  - if the rounding inventory is known complete, the rework (D4) is compared with the unrounded total.
+- **Tests:** `owner-reference.test.ts` (10 tests) uses synthetic references built from the committed template and checked with the contract. It covers:
+  - the blank template and the contract policy;
+  - refusal on missing evidence and on a receipt-id mismatch;
+  - mapping of known fields;
+  - discount placement either way;
+  - unknown states never scored;
+  - D4 rounding;
+  - pairing.
+
+  `npm run receipts:test`: 29/29.
+- **Browser check:** Playwright on a synthetic copy of the owner layout.
+  - Good run: REG901 paired and scored, gate PASS. REG902 (photo only) and REG903 (reference only) were unpaired and not run. The older reference in the photos folder, deliberately invalid JSON, was never read.
+  - Bad run: a reference with a known value but no evidence was refused (`$.printed_payable_total known_requires_independent_evidence`), with no OCR started.
+- **Config:** the contract `.mjs` is excluded from ESLint so it can stay unchanged. A type declaration (`reference-contract.d.mts`) was added beside it.
+
+### Owner's scored run (replaces §6 steps)
+
+```powershell
+git fetch origin
+git switch rework/receipt-scanner
+git pull
+npm.cmd install
+npm.cmd run receipts:test
+npm.cmd run receipts:dev
+```
+
+1. Open http://127.0.0.1:8081/ (Source: Owner references, Browser OCR).
+2. Photos folder: `<folder>\development-working`.
+3. Verified references folder: `<folder>\owner-worksheet\reference-versions`.
+4. Enter a revision label and click **Run sequential suite**.
+5. Click **Copy summary scores** and send back that block only.
