@@ -39,6 +39,10 @@ describe("numbers", () => {
     expect(findAmounts("Disc (2.00)").map((a) => a.negative)).toEqual([true]);
     expect(findAmounts("Refund 2.00 CR").map((a) => a.negative)).toEqual([true]);
   });
+  it("records the printed text of an amount whose digits were repaired", () => {
+    expect(findAmounts("Tea 1O.5O")).toMatchObject([{ cents: 1050, repairedFrom: "1O.5O" }]);
+    expect(findAmounts("Tea 10.50")[0]).not.toHaveProperty("repairedFrom");
+  });
   it("leaves volumes and ounces alone when fixing OCR digits", () => {
     expect(fixOcrDigits("Coke 1.5l 2.0O")).toBe("Coke 1.5l 2.00");
     expect(fixOcrDigits("4oz Steak l2.5O")).toBe("4oz Steak 12.50");

@@ -28,6 +28,8 @@ export interface Amount {
   negative: boolean;
   start: number;
   end: number;
+  /** The text as printed when OCR letters inside the number were repaired ("1O.5O"), else absent. */
+  repairedFrom?: string;
 }
 
 export const DEFAULT_FORMAT: NumberFormat = { decimal: ".", minorDigits: 2 };
@@ -133,7 +135,17 @@ export function findAmounts(line: string, fmt: NumberFormat = DEFAULT_FORMAT): A
     const cents = toCents(m[4] ?? "", m[5] ?? "", fmt);
     if (cents === null) continue;
     const negative = Boolean(m[2] || m[3] || m[7] || (m[1] && m[6]));
-    out.push({ cents, negative, start: m.index!, end: m.index! + m[0].length });
+    const start = m.index!;
+    const end = start + m[0].length;
+    // fixOcrDigits swaps one character for one, so the printed text sits at the same position.
+    const printed = line.slice(start, end).trim();
+    out.push({
+      cents,
+      negative,
+      start,
+      end,
+      ...(printed !== m[0].trim() ? { repairedFrom: printed } : {}),
+    });
   }
   return out;
 }

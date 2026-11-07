@@ -224,6 +224,20 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
     if (wrapPrefix.length) skipped.push(wrapPrefix.join(" "));
     wrapPrefix = [];
   };
+  /**
+   * Owner decision (7 Nov 2026): OCR letters inside a number are still repaired ("1O.5O" → 10.50),
+   * but whatever uses that amount is marked uncertain and the warning names the printed text.
+   */
+  const noteRepair = (amounts: Amount[], field: string | null, item?: ReceiptItem) => {
+    const repaired = amounts.filter((a) => a.repairedFrom !== undefined);
+    if (!repaired.length) return;
+    if (item) item.flagged = true;
+    if (field) uncertain.add(field);
+    for (const a of repaired)
+      warnings.push(
+        `“${a.repairedFrom}” was read as ${fmt(a.negative ? -a.cents : a.cents)} after fixing letters in the number. Please check it.`,
+      );
+  };
   const pushItem = (item: ReceiptItem, observed: boolean) => {
     items.push(item);
     if (observed) qtyObserved.add(item);
@@ -356,6 +370,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
             q >= 1 && q <= 99,
           );
           if (s.taxMarked) anyTaxMarked = true;
+          noteRepair(rest.amounts, null, last());
           i++;
           continue;
         }
@@ -373,6 +388,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
             false,
           );
           if (s.taxMarked) anyTaxMarked = true;
+          noteRepair(next.amounts, null, last());
           uncertain.add("items");
           warnings.push(
             "An item has a readable line amount but an unreadable quantity. Confirm its quantity.",
@@ -445,6 +461,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
     // An offer heading ("2 FOR $8.00") is not an item; its signed saving needs a matching item (D2).
     const offer = !kind ? OFFER.exec(l.text) : null;
     if (offer) {
+      noteRepair(l.amounts, "discount");
       dropPrefix();
       if (!amt.negative || l.amounts.length < 2) continue; // a bare offer description
       const prev = last();
@@ -482,12 +499,14 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
 
     switch (kind) {
       case "subtotal":
+        noteRepair(l.amounts, "total");
         if (!subtotalSeen) r.printedSubtotalCents = amt.cents;
         subtotalSeen = true;
         chargesSeen++;
         section = "summary";
         continue;
       case "service": {
+        noteRepair(l.amounts, "charges");
         chargesSeen++;
         section = "summary";
         if (amt.negative) {
@@ -520,6 +539,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
         continue;
       }
       case "tax": {
+        noteRepair(l.amounts, "charges");
         chargesSeen++;
         section = "summary";
         if (amt.negative) {
@@ -541,6 +561,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
         continue;
       }
       case "discount": {
+        noteRepair(l.amounts, "discount");
         chargesSeen++;
         const itemLevel = lineDiscounts.reduce((s2, d) => s2 + d.cents, 0) - repeatedDiscount;
         if (section !== "items" && itemLevel > 0 && amt.cents === itemLevel) {
@@ -559,6 +580,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
         section = section === "footer" ? "footer" : "summary";
         continue;
       case "rounding": {
+        noteRepair(l.amounts, "total");
         chargesSeen++;
         const before = l.text.slice(0, amt.start);
         const signed = amt.negative || /\+\s*$/.test(before) || amt.cents === 0;
@@ -570,6 +592,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
         continue;
       }
       case "total":
+        if (section !== "footer") noteRepair(l.amounts, "total");
         if (section !== "footer")
           totals.push({
             cents: amt.cents,
@@ -664,6 +687,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
       // D3: an add-on belongs to whoever had the item above it.
       if (prev.lineTotalCents !== null) prev.lineTotalCents += amt.cents;
       appendNote(prev, amt.cents ? `${l.label} ${fmt(amt.cents)}` : l.label);
+      noteRepair(l.amounts, null, prev);
       continue;
     }
     if (amt.cents === 0) continue;
@@ -677,6 +701,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
       },
       row.qtyObserved,
     );
+    noteRepair(l.amounts, null, item);
     if (OPEN_END.test(row.desc)) openItem = item;
   }
   dropPrefix();

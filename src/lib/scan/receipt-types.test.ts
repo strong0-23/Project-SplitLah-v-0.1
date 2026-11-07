@@ -632,3 +632,39 @@ Total                    74.58`;
     expect(r.uncertainFields).toContain("charges");
   });
 });
+
+describe("OCR digit repair is kept but always flagged (owner decision, 7 Nov 2026)", () => {
+  const T = `SHOP
+Noodles              1O.5O
+Green Tea             l.80
+Kaya Toast            4.20
+Service Charge 10%    l.65
+Discount             -O.5O
+TOTAL                l7.65`;
+  it("repairs the digits and flags each row or charge that used a repaired amount", () => {
+    const { receipt: r, warnings } = parseReceiptText(T);
+    expect(r.items.map((i) => [i.description, i.lineTotalCents, i.flagged])).toEqual([
+      ["Noodles", 1050, true],
+      ["Green Tea", 180, true],
+      ["Kaya Toast", 420, false],
+    ]);
+    expect([r.serviceAmountCents, r.discountCents, r.receiptTotalCents]).toEqual([165, 50, 1765]);
+    expect(r.uncertainFields).toEqual(expect.arrayContaining(["charges", "discount", "total"]));
+    const text = warnings.join("\n");
+    for (const printed of ["1O.5O", "l.80", "l.65", "-O.5O", "l7.65"])
+      expect(text).toContain(`“${printed}” was read as`);
+    expect(text).toMatch(/“1O\.5O” was read as 10\.50/);
+    expect(mismatch(T)).toBe(0);
+  });
+  it("adds no repair warning or flag when every number was printed cleanly", () => {
+    const clean = T.replace(/1O\.5O/, "10.50")
+      .replace(/l\.80/, "1.80")
+      .replace(/l\.65/, "1.65")
+      .replace(/-O\.5O/, "-0.50")
+      .replace(/l7\.65/, "17.65");
+    const { receipt: r, warnings } = parseReceiptText(clean);
+    expect(warnings.join(" ")).not.toMatch(/was read as/);
+    expect(r.items.some((i) => i.flagged)).toBe(false);
+    expect(r.uncertainFields).not.toContain("total");
+  });
+});
