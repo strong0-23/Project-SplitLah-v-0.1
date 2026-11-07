@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { computeTotals } from "../bill";
-import { parseReceiptText } from "./parse";
+import { FOLDED_FEES_NOTE, hasFoldedFees, parseReceiptText } from "./parse";
 
 const rows = (t: string) =>
   parseReceiptText(t).receipt.items.map((i) => [i.description, i.quantity, i.lineTotalCents]);
@@ -394,6 +394,19 @@ Paid by Card            21.89`;
     ]);
     expect([r.serviceEnabled, r.serviceAmountCents]).toEqual([true, 339]);
     expect(mismatch(T)).toBe(0);
+  });
+
+  it("records which fee lines were folded into the service amount (1a)", () => {
+    const { receipt: r } = parseReceiptText(T);
+    expect(r.ocrWarnings?.[0]).toBe(`${FOLDED_FEES_NOTE} Delivery Fee 3.99, Platform Fee 0.40.`);
+    expect(hasFoldedFees(r.ocrWarnings)).toBe(true);
+    expect(hasFoldedFees(parseReceiptText(T2).receipt.ocrWarnings)).toBe(true);
+  });
+
+  it("does not record fees when the service amount is only a service charge", () => {
+    const plain = `BISTRO\nSteak  30.00\nSubtotal  30.00\nService Charge 10%  3.00\nTotal  33.00`;
+    expect(hasFoldedFees(parseReceiptText(plain).receipt.ocrWarnings)).toBe(false);
+    expect(hasFoldedFees(undefined)).toBe(false);
   });
 
   const T2 = `SAMPLE THAI KITCHEN

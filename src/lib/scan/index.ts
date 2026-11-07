@@ -18,6 +18,8 @@ import type { CropFractions, OcrEngine, Rotation, ScanOptions } from "./types";
 
 export { ACCEPTED_TYPES, MAX_UPLOAD_BYTES, preparePreview, validateImageFile } from "./canvas";
 export {
+  FOLDED_FEES_NOTE,
+  hasFoldedFees,
   parseReceiptLines,
   parseReceiptText,
   scoreParse,

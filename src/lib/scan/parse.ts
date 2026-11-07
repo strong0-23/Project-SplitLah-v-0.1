@@ -15,6 +15,7 @@ import { readItemRow, letterCount, splitItemLabel } from "./items";
 import {
   ADDRESS,
   classifyLabel,
+  FEE,
   INCLUSIVE_NOTE,
   ITEM_HEADER,
   MODIFIER,
@@ -33,6 +34,17 @@ import { fmt, reconcileCharges } from "./reconcile";
 
 export { scoreParse, isConsistent } from "./reconcile";
 export { splitItemLabel } from "./items";
+
+/**
+ * Start of the scan warning that lists fee lines folded into the service amount (D6). The receipt's
+ * `ocrWarnings` carry it, so the review screen can tell without a new stored field.
+ */
+export const FOLDED_FEES_NOTE = "Delivery/platform fees are included in the service charge:";
+
+/** True when a scanned receipt's service amount includes delivery/platform/packaging fees. */
+export function hasFoldedFees(ocrWarnings: readonly string[] | null | undefined): boolean {
+  return !!ocrWarnings?.some((w) => w.startsWith(FOLDED_FEES_NOTE));
+}
 
 export interface ParseResult {
   receipt: Receipt;
@@ -138,6 +150,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
   const taxParts: Array<{ cents: number; isTotal: boolean }> = [];
   const lineDiscounts: Array<{ item: ReceiptItem; cents: number; desc: string }> = [];
   let serviceAmt: number | null = null;
+  const feeLines: string[] = []; // fee lines added to serviceAmt (D6), for the review warning
   let rounding: number | null = null;
   let totalsBeforeRounding = 0;
   let anyTaxMarked = false;
@@ -249,6 +262,8 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
       case "service": {
         // Fees add up (D6); a negative line such as "Delivery Discount -1.00" reduces them.
         serviceAmt = (serviceAmt ?? 0) + (amt.negative ? -amt.cents : amt.cents);
+        if (FEE.test(l.label) && !amt.negative && amt.cents > 0)
+          feeLines.push(`${l.label} ${fmt(amt.cents)}`);
         const bp = findRateBp(l.label);
         if (bp !== null) r.serviceRateBp = bp;
         section = "summary";
@@ -392,6 +407,10 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
         ? taxParts[0]!.cents
         : taxParts.reduce((s, p) => s + p.cents, 0);
   }
+
+  // First, so it survives the 20-warning cap on what is stored.
+  if (feeLines.length)
+    warnings.unshift(`${FOLDED_FEES_NOTE} ${feeLines.join(", ")}.`.slice(0, 300));
 
   if (items.length === 0) warnings.push("No purchased items were recognised. Add them manually.");
   const missing = items.filter((it) => it.lineTotalCents === null).length;

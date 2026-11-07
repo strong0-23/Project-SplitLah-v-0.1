@@ -3,6 +3,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { sanitizeText, useBill } from "@/hooks/use-bill";
 import { computeTotals } from "@/lib/bill";
 import { formatMoney, formatRate, MAX_QUANTITY, parseRate } from "@/lib/money";
+import { hasFoldedFees } from "@/lib/scan";
 import type { ReceiptItem } from "@/lib/types";
 import { Button, Card, Label, MoneyInput, Notice, Segmented, Toggle } from "./ui";
 import { Shell } from "./Shell";
@@ -70,6 +71,8 @@ export function ReviewStep({ go }: { go: (s: "scan" | "split") => void }) {
   const totals = computeTotals(r);
   const set = (patch: Partial<typeof r>) => setReceipt((x) => ({ ...x, ...patch }));
   const flagged = (f: string) => r.uncertainFields?.includes(f);
+  // D6: delivery/platform fees were folded into the service amount; a % rate can't carry them.
+  const feesDropOut = r.chargeMode === "percentage" && hasFoldedFees(r.ocrWarnings);
   const mismatch = totals.ok ? totals.value.mismatchCents : null;
   const canContinue = totals.ok && mismatch !== null && mismatch === 0 ? true : totals.ok && mismatch === null;
 
@@ -111,6 +114,7 @@ export function ReviewStep({ go }: { go: (s: "scan" | "split") => void }) {
             ? "Service charge is calculated on the subtotal after discount. GST is calculated on that plus service charge."
             : "Use the exact charge amounts printed on the receipt. No percentages are added on top."}
         </p>
+        {feesDropOut && <Notice tone="warning">Your receipt's delivery/platform fees will drop out if you calculate by %.</Notice>}
         {flagged("charges") && <Notice tone="warning">No charges were detected — check whether this receipt has service charge or GST.</Notice>}
 
         <div className="rounded-lg border border-border p-3">

@@ -22,6 +22,12 @@ export type LineKind =
 const CUR = String.raw`(?:\s*\(?\s*(?:s\$|sgd|rm|myr|rp|idr|usd|eur|gbp|jpy|\$|€|£|¥)\s*\)?)?`;
 const END = String.raw`${CUR}\s*:?$`;
 
+/** Order-level fees folded into the service charge (D6). Shared by the classifier and `FEE`. */
+const FEE_TERMS = String.raw`delivery(?:\s*(?:fee|charge|chg))?|(?:platform|packaging|packing|small[\s-]*order|booking)\s*(?:fee|charge|chg)|caj\s*penghantaran|biaya\s*(?:pengiriman|antar|kemasan)|ongkos\s*kirim|ongkir|liefergeb(?:ü|ue)hr|frais\s*de\s*livraison|gastos\s*de\s*env(?:í|i)o|costo\s*di\s*consegna|bezorgkosten`;
+
+/** A service-classified label that is really a delivery/platform/packaging/small-order fee. */
+export const FEE = new RegExp(String.raw`^(?:${FEE_TERMS})\b`, "i");
+
 const R: Array<[LineKind, RegExp]> = [
   // Counts before totals: "Total QTY 10" / "Total items: 4" are never money.
   [
@@ -49,7 +55,10 @@ const R: Array<[LineKind, RegExp]> = [
   // they are spread in proportion to what each person ordered, never shown as an item.
   [
     "service",
-    /^(?:service(?:\s*(?:charge|chg|fee))?|svc(?:\s*chg)?|s\/?c|svr\s*chg|srv\s*chg|sc|gratuity|tip|caj\s*perkhidmatan|biaya\s*layanan|servis|service\s*compris|servizio|coperto|bedienung|delivery(?:\s*(?:fee|charge|chg))?|(?:platform|packaging|packing|small[\s-]*order|booking)\s*(?:fee|charge|chg)|caj\s*penghantaran|biaya\s*(?:pengiriman|antar|kemasan)|ongkos\s*kirim|ongkir|liefergeb(?:ü|ue)hr|frais\s*de\s*livraison|gastos\s*de\s*env(?:í|i)o|costo\s*di\s*consegna|bezorgkosten)\b/i,
+    new RegExp(
+      String.raw`^(?:service(?:\s*(?:charge|chg|fee))?|svc(?:\s*chg)?|s\/?c|svr\s*chg|srv\s*chg|sc|gratuity|tip|caj\s*perkhidmatan|biaya\s*layanan|servis|service\s*compris|servizio|coperto|bedienung|${FEE_TERMS})\b`,
+      "i",
+    ),
   ],
   [
     "discount",
