@@ -126,7 +126,10 @@ The parser also handles:
 **Branch:** `engine-eval`, cut from `rework/receipt-scanner` after the owner approves the Batch 1 PR. Same hard rules as Batch 1. Nothing is merged and the default engine is not changed without owner approval.
 
 ### Phase 2a: port the parser-v2 fixes
-1. **Owner prerequisite:** push the local `parser-v2` branch and its test suite to GitHub, or tell Claude Code where to find it. Claude Code must not proceed without it.
+1. **Source:** branch `parser-v2` on GitHub, pushed on 7 Nov 2026 as one snapshot commit of the owner's local parser-v2 working copy.
+   - 410/410 tests passed at push. It adds no new dependencies; only `receipts:*` scripts were added to `package.json`.
+   - It includes `docs/parser-v2.md`, `batch1c-layout.md`, `review-confirmation.md` and `rounding.md`, plus `tools/receipt-regression` and `tools/ocr-engine-sandbox`. Read those docs first.
+   - Private receipt data was deliberately left out. It stays in the git-ignored `receipt-regression.local/` on the owner's PC. Never ask for it.
 2. **Inventory:** list every behaviour parser-v2 has that the rework parser lacks, including:
    - the triage of the 35 legacy test failures;
    - the documented implicit-quantity layouts and their negative tests;
