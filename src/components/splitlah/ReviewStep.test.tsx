@@ -50,7 +50,7 @@ describe("ReviewStep: delivery/platform fee warning", () => {
 
   it("appears when a receipt with folded-in fees is switched to Calculate by %", async () => {
     renderReview(DELIVERY);
-    await screen.findByDisplayValue("Pad Thai");
+    await screen.findByDisplayValue("Pad Thai 2"); // Batch 1b: unheaded "2" stays in the name
     expect(screen.getByRole("radio", { name: "Amounts on receipt" })).toHaveAttribute(
       "aria-checked",
       "true",
@@ -66,7 +66,7 @@ describe("ReviewStep: delivery/platform fee warning", () => {
 
   it("does not appear for a receipt whose service amount has no fees", async () => {
     renderReview(RESTAURANT);
-    await screen.findByDisplayValue("Truffle Fries");
+    await screen.findByDisplayValue("Truffle Fries 1"); // Batch 1b: unheaded "1" stays in the name
     fireEvent.click(screen.getByRole("radio", { name: "Calculate by %" }));
     expect(screen.queryByText(WARNING)).not.toBeInTheDocument();
   });

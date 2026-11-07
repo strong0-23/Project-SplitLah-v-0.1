@@ -3,7 +3,8 @@
  *
  * Handles "1,234.56", "1.234,56", "1 234,56", zero-decimal currencies ("¥1,200", "Rp 25.000"),
  * leading/trailing currency marks, negatives written as "-2.00", "2.00-", "(2.00)" or "2.00 CR",
- * and common OCR digit confusions inside numbers ("1O.5O" → "10.50").
+ * and common OCR digit confusions inside numbers ("1O.5O" → "10.50"). A colon blocks an amount
+ * only after a digit (times such as "19:47"), so "Total:4.00" is still read.
  *
  * Amounts are returned in the app's integer "cents" (major × 100 + minor), so a zero-decimal
  * amount such as ¥1,200 becomes 120000 and displays as 1,200.00. Splitting maths stays exact.
@@ -113,7 +114,7 @@ function amountRegex(fmt: NumberFormat): RegExp {
       : // Zero-decimal: a grouped number, or 3–6 plain digits (so a quantity "2" is never money).
         String.raw`(\d{1,3}(?:[.,]\d{3})+|\d{3,6})()`;
   return new RegExp(
-    String.raw`(?<![\w.,:/])(\()?(-)?\s*${SYMBOL}?\s*(-)?${number}(?![.,]?\d)(?!\s?%)\s*${SYMBOL}?(\))?(\s*-(?!\s?\d)|\s*CR\b)?`,
+    String.raw`(?<![\w.,/])(?<!\d\s?:)(\()?(-)?\s*${SYMBOL}?\s*(-)?${number}(?![.,]?\d)(?!\s?%)\s*${SYMBOL}?(\))?(\s*-(?!\s?\d)|\s*CR\b)?`,
     "gi",
   );
 }

@@ -4,6 +4,7 @@
  * (used to choose between OCR passes). Never invents amounts; ambiguity is flagged for the user.
  */
 import { computeTotals } from "../bill";
+import { applyRate, formatRate, includedTax } from "../money";
 import type { Receipt } from "../types";
 
 export const fmt = (c: number) => `${c < 0 ? "-" : ""}${(Math.abs(c) / 100).toFixed(2)}`;
@@ -119,6 +120,54 @@ export function reconcileCharges(
     r.printedNetSubtotalCents = sub;
     r.printedSubtotalCents = null;
   }
+}
+
+export interface RateEvidence {
+  sum: number;
+  /** GST/tax rate printed on the tax line, or null. */
+  printedTaxRateBp: number | null;
+  /** The tax line says "GST" (so Singapore's standard rate applies if none is printed). */
+  taxIsGst: boolean;
+  /** Exactly one tax amount was printed (several taxes can't be checked against one rate). */
+  singleTaxLine: boolean;
+  /** Service-charge lines only (no delivery/platform fees, D6), and their printed rate. */
+  serviceChargeCents: number | null;
+  printedServiceRateBp: number | null;
+  /** Rate to assume for a GST line with no printed rate (the app's GST default), or null. */
+  defaultGstRateBp: number | null;
+}
+
+/**
+ * Charge sanity (P5): a printed GST or service amount that differs from rate × base by ANY amount
+ * marks the charges uncertain, and the warning shows the expected value. Never auto-corrects.
+ * Uses the app's own rate arithmetic (`applyRate`, `includedTax`), so "expected" means what the
+ * bill would compute.
+ */
+export function checkChargeRates(
+  r: Receipt,
+  ev: RateEvidence,
+  warnings: string[],
+  uncertain: Set<string>,
+): void {
+  const net = Math.max(ev.sum - r.discountCents, 0);
+  if (ev.serviceChargeCents !== null && ev.printedServiceRateBp !== null) {
+    const expected = applyRate(net, ev.printedServiceRateBp);
+    if (expected !== ev.serviceChargeCents) {
+      uncertain.add("charges");
+      warnings.push(
+        `Service charge is printed as ${fmt(ev.serviceChargeCents)}, but ${formatRate(ev.printedServiceRateBp)}% of ${fmt(net)} is ${fmt(expected)}. Check the service charge; it was not changed.`,
+      );
+    }
+  }
+  const rate = ev.printedTaxRateBp ?? (ev.taxIsGst ? ev.defaultGstRateBp : null);
+  if (!r.gstEnabled || r.gstAmountCents === null || !ev.singleTaxLine || rate === null) return;
+  const base = net + (r.serviceEnabled ? (r.serviceAmountCents ?? 0) : 0);
+  const expected = r.gstInclusive ? includedTax(base, rate) : applyRate(base, rate);
+  if (expected === r.gstAmountCents) return;
+  uncertain.add("charges");
+  warnings.push(
+    `GST is printed as ${fmt(r.gstAmountCents)}, but ${formatRate(rate)}% ${r.gstInclusive ? "included in" : "of"} ${fmt(base)} is ${fmt(expected)}. Check the GST amount; it was not changed.`,
+  );
 }
 
 /** Higher = more internally consistent parse. Used to pick between OCR passes. */

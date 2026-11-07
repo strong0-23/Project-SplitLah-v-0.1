@@ -97,7 +97,8 @@ describe("parser: items are not dropped silently", () => {
     expect(warnings.join(" ")).toMatch(/without a price/);
   });
   it("reads OCR 'I' in the qty column as 1 but flags it", () => {
-    expect(splitItemLabel("LIME JUICE(GST#) I")).toMatchObject({
+    // Batch 1b: a bare trailing quantity needs a Qty column, so the test passes that column in.
+    expect(splitItemLabel("LIME JUICE(GST#) I", { leading: false, trailing: true })).toMatchObject({
       desc: "LIME JUICE",
       quantity: 1,
       qtyUncertain: true,

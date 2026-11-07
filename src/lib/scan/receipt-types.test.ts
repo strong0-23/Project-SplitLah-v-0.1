@@ -230,10 +230,13 @@ Total                  Rp 72.600`;
   it("keeps whole rupiah and reconciles", () => {
     const { receipt: r, currency } = parseReceiptText(T);
     expect(currency).toBe("IDR");
+    // Batch 1b (owner decision, parser-v2 rule): no Qty heading, so the bare "2" stays in the
+    // name and the row is flagged for the user to check, instead of being read as quantity 2.
     expect(rows(T)).toEqual([
-      ["Nasi Goreng", 2, 5000000],
-      ["Es Teh Manis", 2, 1600000],
+      ["Nasi Goreng 2", 1, 5000000],
+      ["Es Teh Manis 2", 1, 1600000],
     ]);
+    expect(r.items.every((i) => i.flagged)).toBe(true);
     expect(r.gstAmountCents).toBe(660000);
     expect(mismatch(T)).toBe(0);
   });
@@ -271,10 +274,12 @@ Suggested tip 20%  4.30`;
     const { receipt: r } = parseReceiptText(T);
     expect(r.serviceEnabled).toBe(false);
     expect(r.gstRateBp).toBe(887);
+    // Batch 1b (owner decision, parser-v2 rule): an unheaded leading "2" stays in the name, flagged.
     expect(rows(T)).toEqual([
-      ["Pancakes", 2, 1800],
+      ["2 Pancakes", 1, 1800],
       ["Coffee", 1, 350],
     ]);
+    expect(r.items.map((i) => i.flagged)).toEqual([true, false]);
     expect(mismatch(T)).toBe(0);
   });
 });
@@ -420,7 +425,8 @@ GST 9%                     4.37
 Total                     52.87`;
   it("adds a service charge and a delivery fee together and reconciles", () => {
     const { receipt: r } = parseReceiptText(T2);
-    expect(r.items.map((i) => i.description)).toEqual(["Pad Thai", "Green Curry"]);
+    // Batch 1b (owner decision): no Qty heading, so the bare numbers stay in the names, flagged.
+    expect(r.items.map((i) => i.description)).toEqual(["Pad Thai 2", "Green Curry 1"]);
     expect([r.serviceAmountCents, r.gstAmountCents, r.gstInclusive]).toEqual([950, 437, false]);
     expect(r.uncertainFields).not.toContain("charges");
     expect(mismatch(T2)).toBe(0);
