@@ -25,14 +25,18 @@ UI code imports `@/lib/scan` (`index.ts`) only.
 | `tesseract-engine.ts` | Tesseract.js behind `OcrEngine`; SDK is lazy-imported in `load` | SDK adapter |
 | `layout.ts` | Word boxes → reading-order rows; wide gaps kept as a two-space column mark | pure |
 | `numbers.ts` | Locale-aware amounts (1,234.56 / 1.234,56 / zero-decimal), negatives, OCR digit fixes, currency detection | pure |
-| `lexicon.ts` | Receipt vocabulary (EN, MS/ID, DE/FR/ES/IT/NL), label classifier with a tail-word check, item header, address, modifier and tax-marker patterns | pure |
-| `items.ts` | Item-row shapes: qty/unit/total columns, `2 @ 3.50`, `x2`, weighed goods | pure |
-| `reconcile.ts` | Tax inclusive vs exclusive from printed numbers; parse consistency score; `isConsistent` reuses `computeTotals` | pure |
+| `lexicon.ts` | Receipt vocabulary (EN, MS/ID, DE/FR/ES/IT/NL), label classifier with a tail-word check and finite OCR label repair (`normaliseLabelWords`: T0TAL, TOTA1, G5T), item header and Qty-column detection (`qtyColumnsOf`), address, modifier, note-vocabulary (`NOT_A_NOTE`) and tax-marker patterns | pure |
+| `items.ts` | Item-row shapes: qty/unit/total columns, `2 @ 3.50`, `x2`, weighed goods. A bare number is a quantity only under a Qty heading or when unit × number = total (D7) | pure |
+| `reconcile.ts` | Tax inclusive vs exclusive from printed numbers; charge-vs-rate check (`checkChargeRates`, P5); parse consistency score; `isConsistent` reuses `computeTotals` | pure |
 | `parse.ts` | Section state machine (header → items → summary → footer): lines → draft `Receipt` + warnings | pure |
 | `scan.ts` | Workflow: decode → load engine → orient → crop/flatten → recognise → optional 2nd pass. Cancellable (`AbortSignal`), time-bounded, engine injected | workflow |
 | `index.ts` | Public API: `scanReceipt`, `parseReceiptText`, `parseReceiptLines`, `validateImageFile`, `preparePreview`, error types | — |
 
-Tests (synthetic text only): `receipt-types.test.ts` (one fixture per receipt style; each must reconcile with `computeTotals`), `parse.test.ts`, `modules.test.ts`, `scan.test.ts` (workflow with a fake engine).
+Tests (synthetic text only): `receipt-types.test.ts` (one fixture per receipt style and per real-receipt pattern P1–P5; each must reconcile with `computeTotals`), `parser-v2-port.test.ts` (parser-v2's parser tests, adapted), `parse.test.ts`, `modules.test.ts`, `scan.test.ts` (workflow with a fake engine).
+
+## Dev-only tool: `tools/receipt-regression/`
+
+Local harness for the owner's scored runs (`npm run receipts:dev`, `receipts:test`, `receipts:check`). It runs the rework parser and a read-only copy of parser-v2's parser (`baseline/parser-v2/`, commit a80f7e3) on the same text and applies the Batch 1b merge gate. The app never imports it; it refuses production builds. See its README.
 
 ## Contracts
 

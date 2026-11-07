@@ -33,3 +33,30 @@ Owner-approved decisions. Each has the rule and the reason for it.
 **Rule.** Delivery fees count as a service charge, spread in proportion to what each person ordered. They are not shown as an item. Delivery fee/charge, platform fee, packaging/packing fee, small-order fee and booking fee (plus common Malay/Indonesian/European equivalents) add to `serviceAmountCents`. A negative fee line (for example "Delivery Discount -1.00") reduces that amount.
 **Why.** A fee for the whole order is shared like a service charge; as an item it would have to be assigned to one person or split evenly, which isn't fair when orders differ in size.
 **Where.** `lexicon.ts` (`service` entry), `parse.ts`.
+
+## Receipt scanner, Batch 1b (approved by the owner, 7 Nov 2026)
+
+Decided while porting parser-v2's parsing rules, where they conflicted with D2 or with existing
+rework behaviour.
+
+### D2 (amended): offers under an item use parser-v2's match rule
+**Rule.** D2 stands: a discount printed directly under an item reduces that item. For a signed
+offer row ("2 FOR $8.00 2.00-"), the saving is taken off the item above only when that item's
+quantity was printed explicitly as the offer's N and its line amount minus the offer price equals
+the saving. Otherwise nothing is deducted, the row is listed under "Lines not used", and the
+discount is flagged. A summary discount equal to the item discounts already applied, and any
+"Total savings" summary, is never deducted again (P3).
+**Why.** Item-level placement keeps a discount with whoever had the item (D2). parser-v2's match
+rule stops an offer from being applied to the wrong item or with the wrong amount.
+**Where.** `parse.ts` (offer rows, `addDiscount`, savings summaries).
+
+### D7: a bare number next to a name is not a quantity without evidence
+**Rule.** A plain leading or trailing number on an item row ("VITAMIN B 12", "100 PLUS",
+"SOAP 2") is a quantity only under a Qty column heading, or when the row's own unit price × that
+number equals its line total. Otherwise it stays in the description and the row is flagged for the
+user. Explicit quantities ("2 x", "x2", "2 @") always count. (parser-v2 rule.)
+**Why.** On real receipts the old reading turned trailing numbers and OCR debris into quantities
+of 4 and 8 (P2). A flagged row costs the user one check; a wrong quantity silently mis-splits.
+Three synthetic rework expectations changed as a result ("2 Pancakes", "Pad Thai 2",
+"Nasi Goreng 2" now keep the number in the name, flagged).
+**Where.** `items.ts` (`splitItemLabel`, `readItemRow`), `lexicon.ts` (`qtyColumnsOf`).
