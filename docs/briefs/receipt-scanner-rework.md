@@ -119,13 +119,61 @@ The parser also handles:
   - Push to the same PR. Do not merge.
 - **Merge gate (owner):** after 1a, the owner runs the branch locally (`npm run dev -- --host`, phone on the same Wi-Fi) and scans 2–3 familiar development receipts. The owner merges PR #2 only if they look right. Claude Code does not merge.
 
+### Owner PC test (7 Nov 2026): **merge blocked**, do Batch 1b
+The owner scanned the development receipts Receipt2–5 locally with PR #2. The rework parser drops rules that parser-v2 had already proven on these receipts. Failure patterns (described in general terms; Claude Code must not ask for the receipts):
+
+| # | Pattern seen | Cause (our diagnosis) |
+|---|---|---|
+| P1 | Summary/footer lines ("Total (SGD) incl. GST …", "Transaction No/Date") appended to an item description as notes; an item whose price OCR lost was appended to the next item and disappeared | The rework's "unpriced line → note on previous item" rule is too greedy |
+| P2 | Quantity 4 and 8 instead of 1 on grocery rows, with leftover tokens ("PW", "%") on the name; a cinema ticket row with qty 1 instead of 2 | Trailing tokens/numbers taken as quantity; parser-v2's trailing/implicit-quantity rules missing |
+| P3 | Bill discount = 2× the printed discount (an item-level discount also repeated in the summary) | No discount de-duplication (parser-v2 had this) |
+| P4 | A total row read as an item (OCR-damaged label, e.g. "T0TAL"/"TOTA1"); a total amount with its decimal point lost ("52455") | Exact-match labels; no OCR-tolerant label matching (parser-v2 had this) |
+| P5 | GST read 6.18 where 9% of the base gives 6.16, and not flagged | No charge-vs-rate sanity check |
+| P6 | Stylised merchant name garbled | OCR; out of scope here (engine comparison) |
+
+## Batch 1b: real-receipt fixes (same branch, same PR #2; do before merge)
+Phase 2a is moved forward into this batch for **parser rules only**.
+1. **Port parser-v2's parsing rules** from branch `parser-v2` into the responsible `src/lib/scan/` modules, together with their tests:
+   - OCR-tolerant summary labels;
+   - trailing and implicit quantity;
+   - discount de-duplication;
+   - rounding;
+   - payment-label handling;
+   - column/row recovery.
+
+   Read `docs/parser-v2.md`, `batch1c-layout.md` and `rounding.md` on that branch first. Where a parser-v2 rule conflicts with D1–D6, stop and ask the owner.
+2. **Not in this batch:** parser-v2's UI and storage features. That covers the "save as defaults?" prompt, the bulk confirmations, quantity review, receipt status and any changes to `types.ts`, `storage.ts` or `bill.ts`. Their adoption has not been approved. List them in the report as "available, not ported".
+3. **Tighten note attachment (P1):**
+   - Only attach an unpriced line to the item above it when it is clearly an add-on: a modifier marker or modifier word, as in `MODIFIER`.
+   - Never attach a line that contains summary, payment, date, time or transaction vocabulary, or that is mostly digits.
+   - An unpriced line that looks like a product becomes its own flagged item with no price, so the user can fill it in.
+4. **Discount de-duplication (P3):** a summary discount equal to the item-level discounts already applied must not be counted again.
+5. **Damaged amounts (P4):** on a total or subtotal line, a 3–6 digit integer with no decimal point may be accepted only as a flagged candidate. Read it with a decimal point inserted, and only if that value reconciles with the computed total. Otherwise keep it as not found.
+6. **Charge sanity (P5):** when a printed GST or service amount differs from rate × base by any amount, mark that charge uncertain. The warning shows the expected value. Never auto-correct.
+7. **Tests:** add one synthetic fixture per pattern P1–P5, written from the descriptions above with invented product names. All parser-v2 tests and all existing rework tests must pass. Where a parser-v2 test assumes the old module API, adapt it to `src/lib/scan` and record that in the report.
+8. **Scored merge gate (owner-run):**
+   - Bring `tools/receipt-regression` from `parser-v2` into this branch, with its `receipts:*` scripts.
+   - Make sure it can run both the parser-v2 parser (as the baseline) and the rework parser on the same OCR text.
+   - Give the owner exact commands to run it locally against Receipt2–5 and their references.
+   - The owner returns only the summary scores.
+   - **Merge only if the rework matches or beats parser-v2 on every receipt** for items, quantities, line amounts, printed total, calculated total and silent errors.
+9. **Report:** write `docs/reports/2026-11-batch1b-real-receipt-fixes.md`, covering:
+   - what was ported;
+   - what was not ported, and why;
+   - the fixes for P1–P5;
+   - test results;
+   - the harness instructions;
+   - a placeholder table for the owner's scores.
+
+   Update the PR description. **Do not merge.**
+
 ## Batch 2: shared parser, then the engine decision
 
 **Purpose:** pick Tesseract or PaddleOCR on evidence. Both run on the device; no VLM or API calls. Both engines run on the same rework parser, so the comparison measures the engine alone.
 
-**Branch:** `engine-eval`, cut from `rework/receipt-scanner` after the owner approves the Batch 1 PR. Same hard rules as Batch 1. Nothing is merged and the default engine is not changed without owner approval.
+**Branch:** `engine-eval`, cut from `rework/receipt-scanner` after the owner merges PR #2 (Batch 1 + 1b). Same hard rules as Batch 1. Nothing is merged and the default engine is not changed without owner approval.
 
-### Phase 2a: port the parser-v2 fixes
+### Phase 2a: remaining parser-v2 items (parser rules were done in Batch 1b)
 1. **Source:** branch `parser-v2` on GitHub, pushed on 7 Nov 2026 as one snapshot commit of the owner's local parser-v2 working copy.
    - 410/410 tests passed at push. It adds no new dependencies; only `receipts:*` scripts were added to `package.json`.
    - It includes `docs/parser-v2.md`, `batch1c-layout.md`, `review-confirmation.md` and `rounding.md`, plus `tools/receipt-regression` and `tools/ocr-engine-sandbox`. Read those docs first.
@@ -138,7 +186,7 @@ The parser also handles:
    - the cash-rounding rule (±5 cents, applied to the final payable total after GST).
 
    Where a parser-v2 rule conflicts with D1–D6, **stop and ask the owner** which to keep.
-3. **Port** each behaviour into the responsible module in `src/lib/scan/`, bringing parser-v2's tests across as synthetic fixtures. All existing tests must still pass.
+3. **Port** each remaining behaviour into the responsible module in `src/lib/scan/`, bringing parser-v2's tests across as synthetic fixtures. All existing tests must still pass. **UI and storage features need owner approval first.**
 4. **Report:** write `docs/reports/2026-11-parser-v2-port.md`. It lists what was ported, what was dropped and why, and the test results.
 
 ### Phase 2b: Paddle adapter
