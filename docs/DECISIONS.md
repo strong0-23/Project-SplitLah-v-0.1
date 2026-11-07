@@ -60,3 +60,17 @@ of 4 and 8 (P2). A flagged row costs the user one check; a wrong quantity silent
 Three synthetic rework expectations changed as a result ("2 Pancakes", "Pad Thai 2",
 "Nasi Goreng 2" now keep the number in the name, flagged).
 **Where.** `items.ts` (`splitItemLabel`, `readItemRow`), `lexicon.ts` (`qtyColumnsOf`).
+
+### D8: OCR digit repair is kept, and always flagged (owner, 7 Nov 2026)
+**Rule.** Letters OCR puts inside a number are still repaired ("1O.5O" → 10.50, "l.80" → 1.80).
+Whenever an amount needed a repair, whatever uses it is marked: an item row is flagged, a service
+or GST amount marks the charges uncertain, a discount marks the discount uncertain, and a total,
+subtotal or rounding amount marks the total uncertain. The warning names the printed text
+(“1O.5O” was read as 10.50…). Amounts printed cleanly are not affected.
+**Why.** The repair recovers many real amounts, but a repaired digit can be wrong; the user should
+check every one of them rather than have it pass silently.
+**Where.** `numbers.ts` (`Amount.repairedFrom`), `parse.ts` (`noteRepair`).
+
+### D4 confirmed; rounding allocation deferred (owner, 7 Nov 2026)
+parser-v2's rounding-as-a-bill-adjustment, shared among participants, is not adopted for now.
+D4 stays: splitting uses the unrounded total, and the rounding is shown as a warning.

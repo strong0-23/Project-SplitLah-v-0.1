@@ -163,3 +163,19 @@ Scoring notes:
 - `80dbed4` Scanner 1b tests: parser-v2 parser tests ported; P1–P5 fixtures
 - `b7c4800` Receipt regression harness: parser-v2 baseline vs rework on the same text
 - this report, `DECISIONS.md` (D2 amended, D7) and `MODULES.md`
+
+## Addendum (7 Nov 2026): owner decisions on §7
+
+- **O→0 repair (D8):** kept. Every amount whose digits were repaired now marks what uses it:
+  - an item row is flagged;
+  - service/GST marks the charges uncertain;
+  - a discount marks the discount uncertain;
+  - a total, subtotal or rounding marks the total uncertain.
+
+  The warning names the printed text, e.g. “1O.5O” was read as 10.50. Implemented with `Amount.repairedFrom` (`numbers.ts`) and `noteRepair` (`parse.ts`). Tests:
+  - a synthetic receipt with repaired item, service, discount and total amounts: each is flagged and named, and it still reconciles;
+  - the same receipt printed cleanly: no repair warning or flag;
+  - a `findAmounts` unit test.
+
+  `npx vitest run`: 205/205.
+- **Rounding allocation:** deferred; D4 stays (split on the unrounded total).
