@@ -21,6 +21,19 @@ export function isSafeCents(v: unknown): v is Cents {
   return typeof v === "number" && Number.isSafeInteger(v) && v >= 0 && v <= MAX_CENTS;
 }
 
+/** Signed amounts are reserved for explicit returns/adjustments, not ordinary prices. */
+export function isSafeSignedCents(v: unknown): v is Cents {
+  return typeof v === "number" && Number.isSafeInteger(v) && Math.abs(v) <= MAX_CENTS;
+}
+
+export function parseSignedMoney(input: string): Cents | null {
+  if (typeof input !== "string") return null;
+  const text = input.trim();
+  const signed = /^([+-])\s*(.*)$/.exec(text);
+  const value = parseMoney(signed ? signed[2]! : text);
+  return value === null ? null : signed?.[1] === "-" && value !== 0 ? -value : value;
+}
+
 /** Parse a percentage string like "9" or "8.25" into basis points. */
 export function parseRate(input: string): BasisPoints | null {
   const s = input.trim().replace(/%$/, "").trim();
@@ -38,7 +51,8 @@ export function formatRate(bp: BasisPoints): string {
 
 export function centsToInput(c: Cents | null): string {
   if (c === null) return "";
-  return `${Math.floor(c / 100)}.${String(c % 100).padStart(2, "0")}`;
+  const amount = Math.abs(c);
+  return `${c < 0 ? "-" : ""}${Math.floor(amount / 100)}.${String(amount % 100).padStart(2, "0")}`;
 }
 
 export function formatMoney(c: Cents, currency = "SGD"): string {
@@ -51,13 +65,14 @@ export function formatMoney(c: Cents, currency = "SGD"): string {
 /** Deterministic half-up rounding of amount * bp / 10000 using integers. */
 export function applyRate(amount: Cents, bp: BasisPoints): Cents {
   const n = BigInt(amount) * BigInt(bp);
-  return Number((n + 5000n) / 10000n);
+  return Number(((n < 0n ? -n : n) + 5000n) / 10000n) * (n < 0n ? -1 : 1);
 }
 
 /** GST contained in an inclusive gross: gross * bp / (10000 + bp), half-up. */
 export function includedTax(gross: Cents, bp: BasisPoints): Cents {
   const d = BigInt(10000 + bp);
-  return Number((BigInt(gross) * BigInt(bp) * 2n + d) / (2n * d));
+  const n = BigInt(gross) * BigInt(bp);
+  return Number(((n < 0n ? -n : n) * 2n + d) / (2n * d)) * (n < 0n ? -1 : 1);
 }
 
 export interface Weighted {

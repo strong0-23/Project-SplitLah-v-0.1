@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Camera, FileText, ImageUp, RotateCcw, RotateCw, Sparkles } from "lucide-react";
 import { useBill } from "@/hooks/use-bill";
 import { ACCEPTED_TYPES, MAX_UPLOAD_BYTES, OcrCancelled, preparePreview, runOcr, validateImageFile, type OcrProgress, type Rotation, type CropFractions } from "@/lib/ocr";
-import { parseReceiptText, scoreParse } from "@/lib/parser";
-import { computeTotals } from "@/lib/bill";
+import { parseOcrResult } from "@/lib/receipt-reading";
+import { scoreOcrText } from "@/lib/scan-score";
 import { Button, Card, Notice } from "./ui";
 import { Shell } from "./Shell";
 
@@ -55,18 +55,11 @@ export function ScanStep({ go }: { go: (s: "review" | "split") => void }) {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const res = await runOcr(file, { rotation, crop: manualCrop ? crop : null }, setProgress, ctrl.signal, (t) => {
-        const { receipt: r } = parseReceiptText(t);
-        const s = scoreParse(r);
-        const totals = computeTotals(r);
-        return { score: s, good: r.items.length > 0 && r.receiptTotalCents !== null && totals.ok && totals.value.mismatchCents === 0 && !r.uncertainFields?.some((field) => field === "charges" || field === "items" || field === "total") && !r.items.some((i) => i.lineTotalCents === null) };
-      });
+      const res = await runOcr(file, { rotation, crop: manualCrop ? crop : null }, setProgress, ctrl.signal, scoreOcrText);
       if (ctrl.signal.aborted) return;
-      const { receipt } = parseReceiptText(res.text);
-      if (receipt.items.length === 0) {
-        setRotation(res.rotation);
-        throw new Error("Text was read but no priced items were found. Rotate or crop the photo to just the receipt and try again.");
-      }
+      const { receipt } = parseOcrResult(res);
+      // An insufficient extraction still has inspectable rows and raw evidence.
+      // Review shows Failed/insufficient and permits manual correction.
       bill.startFromReceipt(receipt);
       setFile(null);
       setPreview(null);
@@ -154,7 +147,7 @@ export function ScanStep({ go }: { go: (s: "review" | "split") => void }) {
         </Card>
       )}
 
-      {error && <Notice tone="error">{error}</Notice>}
+      {error && <Notice tone="error" title="Could not complete">{error}</Notice>}
 
       <div className="grid gap-2">
         <Button variant="outline" block onClick={() => { if (confirmReplace()) { bill.startManual(); go("review"); } }}>

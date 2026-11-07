@@ -1,0 +1,18 @@
+{
+  "name": "splitlah-local-ocr-engine-sandbox",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node ../../node_modules/vite/bin/vite.js --config vite.config.ts",
+    "test": "node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@paddleocr/paddleocr-js": "0.4.2",
+    "@techstark/opencv-js": "4.10.0-release.1",
+    "onnxruntime-web": "1.22.0"
+  },
+  "overrides": {
+    "clipper-lib": "6.4.2",
+    "js-yaml": "4.1.0"
+  }
+}

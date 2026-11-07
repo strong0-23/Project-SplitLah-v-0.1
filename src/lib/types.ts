@@ -2,11 +2,51 @@
 export type Cents = number;
 export type BasisPoints = number;
 
+/** Exact quantities; money remains integer cents. No binary-float price multiplication. */
+export interface RationalQuantity { numerator: number; denominator: number }
+export type ValueOrigin = "observed" | "calculated" | "inferred" | "defaulted" | "saved-preference" | "user-confirmed" | "unknown";
+export interface SourceEvidence {
+  kind: "text" | "geometry" | "calculation" | "preference" | "user";
+  engine?: "text" | "tesseract" | "paddle" | undefined;
+  attemptIndex?: number | undefined;
+  lineIndices?: number[] | undefined;
+  boxIndices?: number[] | undefined;
+  text?: string | undefined;
+  observedValue?: string | number | boolean | null | undefined;
+}
+export interface FieldEvidence {
+  origin: ValueOrigin;
+  needsReview: boolean;
+  reasons: string[];
+  sources: SourceEvidence[];
+  previousOrigin?: ValueOrigin | undefined;
+}
+export type ItemField = "description" | "quantity" | "unitPriceCents" | "lineTotalCents" | "role" | "pricingBasis";
+export type ReceiptField = "currency" | "merchant" | "discountCents" | "service" | "gst" | "serviceRateBp" | "gstRateBp" | "gstInclusive" | "total" | "suggestedTotal" | "rounding" | "rows";
+export interface ReceiptRowEvidence {
+  id: string;
+  role: "product" | "heading" | "adjustment" | "summary" | "payment" | "rounding" | "ambiguous";
+  text: string;
+  amountCents: Cents | null;
+  sources: SourceEvidence[];
+  needsReview: boolean;
+}
+
 export interface ReceiptItem {
   id: string;
   description: string;
-  /** Positive integer quantity. */
+  /** Compatibility/display number. Consult quantityExact and evidence before treating it as known. */
   quantity: number;
+  /** null explicitly means unknown; quantity=1 may then be a legacy placeholder only. */
+  quantityExact?: RationalQuantity | null | undefined;
+  /** Positive layout support only; still defaulted and requires user confirmation. */
+  quantityDefaultBasis?: "implicit-layout" | undefined;
+  unitOfMeasure?: string | undefined;
+  unitPriceCents?: Cents | null | undefined;
+  priceBasis?: { quantity: RationalQuantity; unit: string } | undefined;
+  rowKind?: "product" | "return" | "adjustment" | "ambiguous" | undefined;
+  pricingContext?: { discounts: "none" | "included" | "unresolved"; tax: "compatible" | "unresolved"; adjustment: "none" | "explicit" | "unresolved" } | undefined;
+  evidence?: Partial<Record<ItemField, FieldEvidence | undefined>> | undefined;
   /** Line total for the FULL quantity, in cents. null = unknown / not yet entered. */
   lineTotalCents: Cents | null;
   /** Set by the OCR parser when a field looks uncertain. */
@@ -43,6 +83,15 @@ export interface Receipt {
   uncertainFields?: string[] | undefined;
   /** Human-readable parser warnings. */
   ocrWarnings?: string[] | undefined;
+  evidence?: Partial<Record<ReceiptField, FieldEvidence | undefined>> | undefined;
+  rows?: ReceiptRowEvidence[] | undefined;
+  /** A tender-derived suggestion is never printed-total evidence. */
+  suggestedTotalCents?: Cents | null | undefined;
+  /** Explicit signed final bill adjustment, applied only when eligible or user-confirmed. */
+  roundingAdjustmentCents?: Cents | null | undefined;
+  roundingApplied?: boolean | undefined;
+  preferencePromptHandled?: boolean | undefined;
+  extractionFailure?: { kind: "runtime" | "insufficient"; message: string } | undefined;
 }
 
 export interface Participant {
@@ -80,6 +129,7 @@ export interface ParticipantBill {
   gstAddedCents: Cents;
   /** Informational GST already included in prices (inclusive mode). */
   gstIncludedCents: Cents;
+  roundingCents?: Cents | undefined;
   owedCents: Cents;
 }
 
@@ -89,6 +139,8 @@ export interface BillTotals {
   serviceCents: Cents;
   gstAddedCents: Cents;
   gstIncludedCents: Cents;
+  unroundedTotalCents?: Cents | undefined;
+  roundingCents?: Cents | undefined;
   totalCents: Cents;
   /** receiptTotal - computed total; null when no receipt total entered. */
   mismatchCents: Cents | null;

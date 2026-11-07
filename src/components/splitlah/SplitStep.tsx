@@ -7,6 +7,10 @@ import type { AssignmentMode, ItemAssignment, ReceiptItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Button, Card, MoneyInput, Notice, Segmented } from "./ui";
 import { Shell } from "./Shell";
+import { ReceiptStatus } from "./ReceiptStatus";
+import { assessReceipt } from "@/lib/receipt-status";
+import { effectiveQuantity } from "@/lib/receipt-quality";
+import { formatQuantity } from "@/lib/quantity";
 
 const STATE_STYLE: Record<AllocationState, string> = {
   complete: "bg-success text-success-foreground",
@@ -70,7 +74,7 @@ function ItemAssign({ item }: { item: ReceiptItem }) {
   const modes: { value: AssignmentMode; label: string }[] = [
     { value: "single", label: "One" },
     { value: "even", label: "Even" },
-    ...(item.quantity > 1 ? [{ value: "quantity" as const, label: "By qty" }] : []),
+    ...(effectiveQuantity(item) !== null && Number.isSafeInteger(item.quantity) && item.quantity > 1 && !item.evidence?.quantity?.needsReview ? [{ value: "quantity" as const, label: "By qty" }] : []),
     { value: "custom", label: "Custom $" },
   ];
 
@@ -79,7 +83,7 @@ function ItemAssign({ item }: { item: ReceiptItem }) {
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="font-semibold">{item.description || "Untitled item"}</p>
-          <p className="text-xs text-muted-foreground">Qty {item.quantity} · <span className="money">{formatMoney(item.lineTotalCents ?? 0)}</span> total</p>
+          <p className="text-xs text-muted-foreground">Qty {effectiveQuantity(item) === null ? "unknown / needs check" : item.quantityExact ? formatQuantity(item.quantityExact) : item.quantity} · <span className="money">{item.lineTotalCents === null ? "Unknown amount" : formatMoney(item.lineTotalCents)}</span> total</p>
         </div>
         <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-xs font-medium", STATE_STYLE[alloc.state])}>
           {alloc.state === "complete" ? "Done" : alloc.state === "unassigned" ? "Unassigned" : alloc.state === "partial" ? `${formatMoney(alloc.remainingCents)} left` : alloc.state === "over" ? "Over" : "Fix"}
@@ -126,7 +130,7 @@ function ItemAssign({ item }: { item: ReceiptItem }) {
       {mode === "custom" && (
         <div className="space-y-2">
           {participants.map((p) => (
-            <MoneyInput key={p.id} compact label={p.name || "Unnamed"} value={cur.amounts[p.id] ?? null}
+            <MoneyInput key={p.id} compact allowNegative={(item.lineTotalCents ?? 0) < 0} label={p.name || "Unnamed"} value={cur.amounts[p.id] ?? null}
               onChange={(c) => {
                 const amounts = { ...cur.amounts };
                 if (c === null) delete amounts[p.id]; else amounts[p.id] = c;
@@ -144,6 +148,7 @@ function ItemAssign({ item }: { item: ReceiptItem }) {
 export function SplitStep({ go }: { go: (s: "review" | "summary") => void }) {
   const { receipt, participants, assignments } = useBill();
   const calc = calculateBill(receipt, participants, assignments);
+  const quality = assessReceipt(receipt);
   const pending = receipt.items.filter((it) => allocateItem(it, assignments[it.id], participants).state !== "complete");
   const unassignedCents = pending.reduce((s, it) => s + allocateItem(it, assignments[it.id], participants).remainingCents, 0);
 
@@ -153,11 +158,12 @@ export function SplitStep({ go }: { go: (s: "review" | "summary") => void }) {
         {pending.length > 0 && <p className="text-center text-sm text-warning-foreground"><span className="money">{formatMoney(unassignedCents)}</span> across {pending.length} item{pending.length > 1 ? "s" : ""} still to allocate</p>}
         <div className="grid grid-cols-[auto_1fr] gap-2">
           <Button variant="outline" onClick={() => go("review")}>Back</Button>
-          <Button disabled={!calc.ok} onClick={() => go("summary")}>See summary</Button>
+          <Button disabled={!calc.ok || quality.status !== "Ready"} onClick={() => { if (quality.status === "Ready") go("summary"); }}>See summary</Button>
         </div>
       </div>
     }>
       <h1 className="text-2xl font-bold">Who had what?</h1>
+      <ReceiptStatus receipt={receipt} />
       <People />
       <Card className="space-y-3">
         <h2 className="font-semibold">Items</h2>

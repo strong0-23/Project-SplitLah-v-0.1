@@ -1,4 +1,5 @@
-import { allocateLargestRemainder, applyRate, includedTax, isSafeCents, MAX_QUANTITY } from "./money";
+import { allocateLargestRemainder, applyRate, includedTax, isSafeCents, isSafeSignedCents, MAX_QUANTITY } from "./money";
+import { itemQuantity, quantityNumber, validatePriceRelationship } from "./quantity";
 import type {
   BillCalculation,
   BillTotals,
@@ -23,10 +24,19 @@ export function validateItems(items: ReceiptItem[]): string[] {
   items.forEach((it, i) => {
     const label = itemLabel(it, i);
     if (!it.description.trim()) errors.push(`${label}: enter a description.`);
-    if (!Number.isSafeInteger(it.quantity) || it.quantity < 1 || it.quantity > MAX_QUANTITY)
-      errors.push(`${label}: quantity must be a whole number from 1 to ${MAX_QUANTITY}.`);
+    const quantity = itemQuantity(it);
+    const explicitSigned = it.rowKind === "return" || (it.rowKind === "adjustment" && it.pricingContext?.adjustment === "explicit");
+    const explicitlyUnknown = it.quantityExact === null || (it.quantityExact === undefined && !!it.evidence?.quantity && ["unknown", "defaulted"].includes(it.evidence.quantity.origin));
+    // An explicit unknown quantity need not prevent adding observed line amounts.
+    // Review status separately prevents a usable split until required fields are confirmed.
+    if (!explicitlyUnknown && (!quantity || (!explicitSigned && quantity.numerator <= 0) || (quantity.numerator === 0 && it.rowKind !== "adjustment")))
+      errors.push(`${label}: quantity must be an exact non-zero value up to ${MAX_QUANTITY}; signed quantities require an explicit return or adjustment.`);
     if (it.lineTotalCents === null) errors.push(`${label}: enter the line total.`);
-    else if (!isSafeCents(it.lineTotalCents)) errors.push(`${label}: line total is invalid.`);
+    else if (!isSafeSignedCents(it.lineTotalCents)) errors.push(`${label}: line total is invalid.`);
+    else if (it.lineTotalCents < 0 && !explicitSigned) errors.push(`${label}: classify the negative line explicitly as a return or adjustment.`);
+    if (quantity && quantity.numerator < 0 && (it.lineTotalCents ?? 0) > 0 && it.rowKind !== "adjustment")
+      errors.push(`${label}: negative quantity and positive line amount have inconsistent signs.`);
+    errors.push(...validatePriceRelationship(it).map((reason) => `${label}: ${reason}`));
   });
   return errors;
 }
@@ -38,8 +48,17 @@ export function computeTotals(r: Receipt): Result<BillTotals> {
   if (errors.length) return { ok: false, errors };
 
   const itemSubtotalCents = r.items.reduce((a, it) => a + (it.lineTotalCents as Cents), 0);
+  if (!isSafeSignedCents(itemSubtotalCents)) errors.push("Item subtotal exceeds the supported signed amount range.");
+  if (r.receiptTotalCents !== null && !isSafeSignedCents(r.receiptTotalCents)) errors.push("Printed receipt total is invalid.");
+  const hasRounding = r.roundingAdjustmentCents != null || r.roundingApplied !== undefined || !!r.evidence?.rounding;
+  if (r.roundingAdjustmentCents != null && !isSafeSignedCents(r.roundingAdjustmentCents)) errors.push("Bill rounding adjustment is invalid.");
+  if (r.roundingApplied && !isSafeSignedCents(r.roundingAdjustmentCents)) errors.push("Enter an explicit signed bill rounding adjustment before applying it.");
   const discountCents = r.discountCents;
-  if (discountCents > itemSubtotalCents) errors.push("Discount cannot exceed the item subtotal.");
+  if (discountCents > Math.max(itemSubtotalCents, 0)) errors.push("Discount cannot exceed the positive item subtotal.");
+
+  const containsCredits = r.items.some((it) => (it.lineTotalCents ?? 0) < 0);
+  if (containsCredits && itemSubtotalCents <= 0 && (r.serviceEnabled || r.gstEnabled || discountCents > 0))
+    errors.push("Refund-only or non-positive bills with tax, service charges or receipt discounts require explicit manual charge treatment; turn those charges off before splitting.");
 
   const base = itemSubtotalCents - discountCents;
   let serviceCents = 0;
@@ -72,11 +91,17 @@ export function computeTotals(r: Receipt): Result<BillTotals> {
 
   if (errors.length) return { ok: false, errors };
 
-  const totalCents = base + serviceCents + gstAddedCents;
+  const unroundedTotalCents = base + serviceCents + gstAddedCents;
+  if (!isSafeSignedCents(unroundedTotalCents)) return { ok: false, errors: ["Unrounded calculated total exceeds the supported signed amount range."] };
+  const roundingCents = r.roundingApplied ? r.roundingAdjustmentCents! : 0;
+  const totalCents = unroundedTotalCents + roundingCents;
+  if (!isSafeSignedCents(totalCents)) return { ok: false, errors: ["Calculated total exceeds the supported signed amount range."] };
   const mismatchCents = r.receiptTotalCents === null ? null : r.receiptTotalCents - totalCents;
   return {
     ok: true,
-    value: { itemSubtotalCents, discountCents, serviceCents, gstAddedCents, gstIncludedCents, totalCents, mismatchCents },
+    value: { itemSubtotalCents, discountCents, serviceCents, gstAddedCents, gstIncludedCents, totalCents, mismatchCents,
+      ...(hasRounding ? { unroundedTotalCents, roundingCents } : {}),
+    },
   };
 }
 
@@ -99,27 +124,34 @@ export function allocateItem(item: ReceiptItem, a: ItemAssignment | undefined, p
   const valid = new Set(participants.map((p) => p.id));
   const base = { shares: {}, allocatedCents: 0, remainingCents: line, allocatedQty: 0 };
   if (item.lineTotalCents === null) return { ...base, state: "invalid", message: "Line total missing" };
+  if (validateItems([item]).length) return { ...base, state: "invalid", message: validateItems([item]).join(" ") };
   if (!a) return { ...base, state: "unassigned", message: "Not assigned" };
 
   if (a.mode === "single" || a.mode === "even") {
     const ids = [...new Set(a.participantIds.filter((id) => valid.has(id)))].sort();
     if (ids.length === 0) return { ...base, state: "unassigned", message: "Not assigned" };
     if (a.mode === "single" && ids.length !== 1) return { ...base, state: "invalid", message: "Pick exactly one person" };
-    const shares = allocateLargestRemainder(line, ids.map((id) => ({ id, weight: 1 })));
+    const shares = allocateSigned(line, ids.map((id) => ({ id, weight: 1 })));
     return { shares, allocatedCents: line, remainingCents: 0, allocatedQty: item.quantity, state: "complete", message: ids.length > 1 ? `Split ${ids.length} ways` : "Assigned" };
   }
 
   if (a.mode === "quantity") {
+    const quantity = itemQuantity(item);
+    const evidence = item.evidence?.quantity;
+    if (!quantity || quantity.denominator !== 1 || quantity.numerator <= 0 || line < 0 ||
+      (evidence && (evidence.needsReview || !["observed", "user-confirmed"].includes(evidence.origin))))
+      return { ...base, state: "invalid", message: "Quantity splitting requires a confirmed positive whole-number quantity; use single, even or custom amounts for fractional quantities and credits" };
+    const knownQuantity = quantityNumber(quantity);
     const entries = Object.entries(a.quantities).filter(([id]) => valid.has(id));
     for (const [, q] of entries)
       if (!Number.isSafeInteger(q) || q < 0) return { ...base, state: "invalid", message: "Quantities must be whole numbers ≥ 0" };
     const used = entries.filter(([, q]) => q > 0);
     const qty = used.reduce((s, [, q]) => s + q, 0);
-    if (qty === 0) return { ...base, state: "unassigned", message: `0 of ${item.quantity} allocated` };
-    if (qty > item.quantity) return { ...base, allocatedQty: qty, state: "over", message: `${qty} of ${item.quantity} allocated — too many` };
-    if (qty < item.quantity) {
-      const partial = Math.floor((line * qty) / item.quantity);
-      return { ...base, allocatedQty: qty, allocatedCents: partial, remainingCents: line - partial, state: "partial", message: `${qty} of ${item.quantity} allocated` };
+    if (qty === 0) return { ...base, state: "unassigned", message: `0 of ${knownQuantity} allocated` };
+    if (qty > knownQuantity) return { ...base, allocatedQty: qty, state: "over", message: `${qty} of ${knownQuantity} allocated — too many` };
+    if (qty < knownQuantity) {
+      const partial = Number(BigInt(line) * BigInt(qty) / BigInt(knownQuantity));
+      return { ...base, allocatedQty: qty, allocatedCents: partial, remainingCents: line - partial, state: "partial", message: `${qty} of ${knownQuantity} allocated` };
     }
     const shares = allocateLargestRemainder(line, used.map(([id, q]) => ({ id, weight: q })));
     return { shares, allocatedCents: line, remainingCents: 0, allocatedQty: qty, state: "complete", message: "All units allocated" };
@@ -127,18 +159,23 @@ export function allocateItem(item: ReceiptItem, a: ItemAssignment | undefined, p
 
   // custom
   const entries = Object.entries(a.amounts).filter(([id]) => valid.has(id));
-  for (const [, c] of entries) if (!isSafeCents(c)) return { ...base, state: "invalid", message: "Custom amounts must be valid, non-negative" };
+  for (const [, c] of entries) if (!isSafeSignedCents(c) || (c !== 0 && Math.sign(c) !== Math.sign(line))) return { ...base, state: "invalid", message: "Custom amounts must be valid and have the same sign as the line amount" };
   const sum = entries.reduce((s, [, c]) => s + c, 0);
-  if (sum === 0 && line > 0) return { ...base, state: "unassigned", message: "No amounts entered" };
-  if (sum > line) return { ...base, allocatedCents: sum, remainingCents: line - sum, state: "over", message: "Amounts exceed line total" };
-  if (sum < line) return { ...base, allocatedCents: sum, remainingCents: line - sum, state: "partial", message: "Amounts below line total" };
+  if (sum === 0 && line !== 0) return { ...base, state: "unassigned", message: "No amounts entered" };
+  if (Math.abs(sum) > Math.abs(line)) return { ...base, allocatedCents: sum, remainingCents: line - sum, state: "over", message: "Amounts exceed line total" };
+  if (Math.abs(sum) < Math.abs(line)) return { ...base, allocatedCents: sum, remainingCents: line - sum, state: "partial", message: "Amounts below line total" };
   const shares: Record<string, Cents> = {};
-  for (const [id, c] of entries) if (c > 0) shares[id] = c;
+  for (const [id, c] of entries) if (c !== 0) shares[id] = c;
   if (line === 0 && Object.keys(shares).length === 0) {
     // $0 item: still needs at least one person listed to be "complete"
     if (entries.length === 0) return { ...base, state: "unassigned", message: "Not assigned" };
   }
   return { shares, allocatedCents: line, remainingCents: 0, allocatedQty: item.quantity, state: "complete", message: "Custom amounts match" };
+}
+
+function allocateSigned(total: Cents, weights: { id: string; weight: number }[]): Record<string, Cents> {
+  const shares = allocateLargestRemainder(Math.abs(total), weights);
+  return Object.fromEntries(Object.entries(shares).map(([id, cents]) => [id, total < 0 ? -cents : cents]));
 }
 
 function shareNote(item: ReceiptItem, a: ItemAssignment, pid: string, nWays: number): string {
@@ -181,11 +218,15 @@ export function calculateBill(r: Receipt, participants: Participant[], assignmen
   const ids = participants.map((p) => p.id);
   const w = (f: (b: ParticipantBill) => number) => ids.map((id) => ({ id, weight: f(B(id)) }));
   try {
-    const disc = allocateLargestRemainder(totals.discountCents, w((b: ParticipantBill) => b.itemSubtotalCents));
+    // Credits must never become negative allocation weights. Proportions for new
+    // charges/discounts follow positive purchased amounts, while item credits
+    // stay with their deliberately assigned recipients.
+    const positiveBasis = (b: ParticipantBill) => b.items.reduce((sum, item) => sum + Math.max(item.cents, 0), 0);
+    const disc = allocateLargestRemainder(totals.discountCents, w(positiveBasis));
     ids.forEach((id) => (B(id).discountCents = disc[id] ?? 0));
-    const svc = allocateLargestRemainder(totals.serviceCents, w((b: ParticipantBill) => b.itemSubtotalCents - b.discountCents));
+    const svc = allocateLargestRemainder(totals.serviceCents, w((b: ParticipantBill) => Math.max(positiveBasis(b) - b.discountCents, 0)));
     ids.forEach((id) => (B(id).serviceCents = svc[id] ?? 0));
-    const gstW = w((b: ParticipantBill) => b.itemSubtotalCents - b.discountCents + b.serviceCents);
+    const gstW = w((b: ParticipantBill) => Math.max(positiveBasis(b) - b.discountCents + b.serviceCents, 0));
     const gst = allocateLargestRemainder(totals.gstAddedCents, gstW);
     const inc = allocateLargestRemainder(totals.gstIncludedCents, gstW);
     ids.forEach((id) => {
@@ -194,6 +235,19 @@ export function calculateBill(r: Receipt, participants: Participant[], assignmen
       b.gstIncludedCents = inc[id] ?? 0;
       b.owedCents = b.itemSubtotalCents - b.discountCents + b.serviceCents + b.gstAddedCents;
     });
+    if (totals.roundingCents !== undefined) {
+      // Final bill rounding is allocated after tax. Magnitudes of already
+      // calculated payables support purchases and refunds without negative
+      // weights. The zero-payable case uses equal weights. Remainder ties use
+      // ascending participant IDs, just like existing cent allocation.
+      const anyWeight = ids.some((id) => B(id).owedCents !== 0);
+      const rounding = allocateSigned(totals.roundingCents,
+        ids.map((id) => ({ id, weight: anyWeight ? Math.abs(B(id).owedCents) : 1 })));
+      ids.forEach((id) => {
+        B(id).roundingCents = rounding[id] ?? 0;
+        B(id).owedCents += B(id).roundingCents!;
+      });
+    }
   } catch (e) {
     return { ok: false, errors: [e instanceof Error ? e.message : "Allocation failed."] };
   }

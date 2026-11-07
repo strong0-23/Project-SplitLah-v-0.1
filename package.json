@@ -4,6 +4,9 @@
   "sideEffects": false,
   "type": "module",
   "scripts": {
+    "receipts:dev": "vite --config tools/receipt-regression/vite.config.ts",
+    "receipts:test": "vitest run --config tools/receipt-regression/vitest.config.ts",
+    "receipts:check": "tsc --project tools/receipt-regression/tsconfig.json",
     "dev": "vite dev",
     "build": "vite build",
     "build:dev": "vite build --mode development",

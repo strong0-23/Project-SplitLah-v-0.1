@@ -5,9 +5,10 @@
  *
  * Pipeline (each stage reports its own errors): decode → load recogniser → orient → crop +
  * illumination flattening at near-native resolution → recognise (single-column layout) → optional
- * second pass (uniform block layout) only when the caller's score says the first pass is inconsistent.
+ * second pass (uniform block layout), then an original-colour fallback if still inconsistent.
  */
-import { detectPaperBounds, flattenIllumination, type Rect } from "./preprocess";
+import { detectPaperBounds, flattenIllumination, grayscale, type Rect } from "./preprocess";
+import { itemRegion, type OcrWord } from "./ocr-regions";
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
 export const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/webp"];
@@ -79,14 +80,29 @@ function render(b: ImageBitmap, rot: Rotation, crop: CropFractions | null, maxDi
   return canvas;
 }
 
-function flattenCanvas(canvas: HTMLCanvasElement): HTMLCanvasElement {
+function flattenCanvas(canvas: HTMLCanvasElement, channel: "luminance" | "blue" = "luminance", radiusScale = 1, illumination = true): HTMLCanvasElement {
   const ctx = canvas.getContext("2d")!;
   const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const out = flattenIllumination({ data: img.data, width: img.width, height: img.height });
+  const pixels = { data: img.data, width: img.width, height: img.height };
+  const radius = radiusScale === 1 ? undefined : Math.max(1, Math.round(Math.max(12, Math.round(Math.min(img.width, img.height) / 45)) * radiusScale));
+  const out = illumination ? flattenIllumination(pixels, radius, channel) : grayscale(pixels, channel);
   const prepared = ctx.createImageData(out.width, out.height);
   prepared.data.set(out.data);
   ctx.putImageData(prepared, 0, 0);
   return canvas;
+}
+
+function fineRotate(canvas: HTMLCanvasElement, degrees: number): HTMLCanvasElement {
+  if (!degrees) return canvas;
+  const angle = degrees * Math.PI / 180;
+  const out = document.createElement("canvas");
+  out.width = Math.ceil(Math.abs(canvas.width * Math.cos(angle)) + Math.abs(canvas.height * Math.sin(angle)));
+  out.height = Math.ceil(Math.abs(canvas.height * Math.cos(angle)) + Math.abs(canvas.width * Math.sin(angle)));
+  const ctx = out.getContext("2d")!;
+  ctx.fillStyle = "white"; ctx.fillRect(0, 0, out.width, out.height);
+  ctx.translate(out.width / 2, out.height / 2); ctx.rotate(angle);
+  ctx.drawImage(canvas, -canvas.width / 2, -canvas.height / 2);
+  return out;
 }
 
 /** Auto-detects the paper region in the oriented image as crop fractions (null = no clear edge). */
@@ -131,10 +147,25 @@ export interface OcrResult {
   rotation: Rotation;
   crop: CropFractions | null;
   passes: number;
+  /** In-memory diagnostics; private regression reports may retain these, never app storage. */
+  attempts: { text: string; preprocessing: "flattened" | "original" | "blue-adaptive" | "grayscale"; pageSegmentation: "4" | "6"; score: number | null; good: boolean; words?: { text: string; confidence: number; bbox: { x0: number; y0: number; x1: number; y1: number } }[] }[];
+  selectedAttempt: number;
+  itemReadings?: { itemIndex: number; description: string; sourceAttempt: number; crop: CropFractions; attempts: { text: string; words: OcrWord[]; pageSegmentation: "4" | "6" }[]; error?: string }[];
+}
+
+/** Development experiments only. Omitting this argument preserves the normal pipeline. */
+export interface OcrDiagnostics {
+  maxDimension?: number;
+  lighting?: "adaptive" | "blue-adaptive" | "grayscale" | "original";
+  radiusScale?: number;
+  fineRotationDegrees?: number;
+  includeWords?: boolean;
+  itemRegions?: boolean;
+  onPrepared?: (image: { blob: Blob; width: number; height: number; preprocessing: OcrResult["attempts"][number]["preprocessing"] }) => Promise<void>;
 }
 
 /** Score callback supplied by the caller (keeps parsing out of this module). good=true skips fallback. */
-export type TextScorer = (text: string) => { score: number; good: boolean };
+export type TextScorer = (text: string) => { score: number; good: boolean; recoveryItems?: { index: number; description: string }[] };
 
 type TWorker = Awaited<ReturnType<typeof import("tesseract.js")["createWorker"]>>;
 
@@ -144,6 +175,7 @@ export async function runOcr(
   onProgress: (p: OcrProgress) => void,
   signal: AbortSignal,
   scorer: TextScorer,
+  diagnostic?: OcrDiagnostics,
 ): Promise<OcrResult> {
   // Internal controller combines user cancel + overall time bound.
   const ctrl = new AbortController();
@@ -263,26 +295,84 @@ export async function runOcr(
     stage = "recognize";
     range = [0.45, 0.8];
     const crop = opts.crop ?? autoCrop(bitmap, rotation);
-    const full = flattenCanvas(render(bitmap, rotation, crop, MAX_DIMENSION));
-    bitmap.close();
-    bitmap = null;
+    const maxDimension = Math.min(6000, Math.max(64, diagnostic?.maxDimension ?? MAX_DIMENSION));
+    const radiusScale = Math.min(4, Math.max(0.25, diagnostic?.radiusScale ?? 1));
+    const fineRotation = Math.min(10, Math.max(-10, diagnostic?.fineRotationDegrees ?? 0));
+    const lighting = diagnostic?.lighting ?? "adaptive";
+    const preprocessing = lighting === "adaptive" ? "flattened" : lighting;
+    let full = fineRotate(render(bitmap, rotation, crop, maxDimension), fineRotation);
+    if (lighting !== "original") full = flattenCanvas(full, lighting === "blue-adaptive" ? "blue" : "luminance", radiusScale, lighting !== "grayscale");
+    if (diagnostic?.onPrepared) await guard(diagnostic.onPrepared({ blob: await guard(toBlob(full)), width: full.width, height: full.height, preprocessing }));
     report("Reading text", 0);
     const first = await recognize(full, "4"); // single column of variable-size text: suits receipts
     let text = first.text ?? "";
     let passes = 1;
     const s1 = scorer(text);
+    const attempts: OcrResult["attempts"] = [];
+    const record = (candidate: string, preprocessing: OcrResult["attempts"][number]["preprocessing"], pageSegmentation: "4" | "6", rating: ReturnType<TextScorer>, words: OcrResult["attempts"][number]["words"]) => {
+      attempts.push({ text: candidate, preprocessing, pageSegmentation, score: Number.isFinite(rating.score) ? rating.score : null, good: rating.good,
+        ...(diagnostic?.includeWords ? { words: words?.map(w => ({ text: w.text, confidence: w.confidence, bbox: w.bbox })) ?? [] } : {}) });
+    };
+    record(text, preprocessing, "4", s1, first.words);
+    let best = s1;
+    let bestData = first;
+    let selectedAttempt = 0;
     if (!s1.good) {
       // Fallback only when the first reading is internally inconsistent.
-      range = [0.8, 1];
+      range = [0.8, 0.9];
       report("Double-checking", 0);
       const second = await recognize(full, "6");
       passes = 2;
       const s2 = scorer(second.text ?? "");
-      if (s2.score > s1.score) text = second.text ?? "";
+      record(second.text ?? "", preprocessing, "6", s2, second.words);
+      if (s2.score > best.score) { text = second.text ?? ""; best = s2; bestData = second; selectedAttempt = 1; }
+    }
+    if (!best.good) {
+      // Lighting correction can remove faint strokes. Try the same crop without it.
+      // Experimental colour readings must pass acceptance before replacing recovered
+      // rows: a sparse, damaged parse can score higher merely by losing uncertain rows.
+      // A reading with no recovered items (-Infinity) can still be rescued.
+      range = [0.9, 1];
+      report("Checking original colours", 0);
+      const original = fineRotate(render(bitmap, rotation, crop, maxDimension), fineRotation);
+      if (diagnostic?.onPrepared) await guard(diagnostic.onPrepared({ blob: await guard(toBlob(original)), width: original.width, height: original.height, preprocessing: "original" }));
+      const third = await recognize(original, "6");
+      const candidate = third.text ?? "";
+      const s3 = scorer(candidate);
+      record(candidate, "original", "6", s3, third.words);
+      passes = 3;
+      if (s3.score > best.score && (s3.good || best.score === Number.NEGATIVE_INFINITY)) {
+        text = candidate;
+        best = s3; bestData = third;
+        selectedAttempt = 2;
+      }
+    }
+    const itemReadings: NonNullable<OcrResult["itemReadings"]> = [];
+    // Item geometry, never reference answers or totals, determines native-resolution
+    // row crops. At most two unresolved rows are checked; known-price rows are untouched.
+    if ((diagnostic?.itemRegions ?? true) && fineRotation === 0) for (const item of (best.recoveryItems ?? []).slice(0, 2)) {
+      const region = itemRegion(bestData.words ?? [], item.description, full.width, full.height);
+      if (!region) continue;
+      const base = crop ?? { left: 0, top: 0, right: 1, bottom: 1 };
+      const rowCrop = { left: base.left + (base.right - base.left) * region.left, right: base.left + (base.right - base.left) * region.right, top: base.top + (base.bottom - base.top) * region.top, bottom: base.top + (base.bottom - base.top) * region.bottom };
+      const reading: NonNullable<OcrResult["itemReadings"]>[number] = { itemIndex: item.index, description: item.description, sourceAttempt: selectedAttempt, crop: rowCrop, attempts: [] };
+      itemReadings.push(reading);
+      try {
+        range = [.97, 1]; report("Checking an unreadable item row", 0);
+        const row = flattenCanvas(render(bitmap, rotation, rowCrop, 4096));
+        if (diagnostic?.onPrepared) await guard(diagnostic.onPrepared({ blob: await guard(toBlob(row)), width: row.width, height: row.height, preprocessing: "flattened" }));
+        for (const mode of ["4", "6"] as const) {
+          const data = await recognize(row, mode);
+          reading.attempts.push({ text: data.text ?? "", words: (data.words ?? []).map(w => ({ text: w.text, confidence: w.confidence, bbox: w.bbox })), pageSegmentation: mode });
+        }
+      } catch (e) {
+        if (e instanceof OcrCancelled || (e instanceof OcrError && e.stage === "timeout")) throw e;
+        reading.error = e instanceof Error ? e.message : String(e);
+      }
     }
     check();
     if (!text.trim()) throw new OcrError("recognize", "No text was found. Rotate the photo so the text is upright, crop to the receipt, or retake it in better light.");
-    return { text, rotation, crop, passes };
+    return { text, rotation, crop, passes, attempts, selectedAttempt, ...(itemReadings.length ? { itemReadings } : {}) };
   } finally {
     clearTimeout(timer);
     signal.removeEventListener("abort", onAbort);

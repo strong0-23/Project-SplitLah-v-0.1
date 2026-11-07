@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LOAD_TIMEOUT_MS, OcrCancelled, runOcr } from "./ocr";
+import { scoreOcrText } from "./scan-score";
+import { parseReceiptText } from "./parser";
+import { parseOcrResult } from "./receipt-reading";
 
 const mocks = vi.hoisted(() => ({ createWorker: vi.fn() }));
 vi.mock("tesseract.js", () => ({ createWorker: mocks.createWorker, OEM: { LSTM_ONLY: 1 } }));
@@ -23,6 +26,131 @@ function setup() {
 }
 
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); mocks.createWorker.mockReset(); });
+
+describe("OCR pass selection", () => {
+  const useful = "EXAMPLE CINEMA\nUnit(g) Qty Amount\nSPACE FILM (Adult) 990 3 7 27.00 -\nGrand Total ( INCL GST) © $27.00\nCredit 27.00";
+  const footer = "Paid By\nCredit 27.00\nTransaction Date example";
+  it.each([false, true])("keeps the useful reading with footer first = %s", async (footerFirst) => {
+    setup();
+    const worker = {
+      setParameters: vi.fn().mockResolvedValue(undefined),
+      recognize: vi.fn()
+        .mockResolvedValueOnce({ data: { text: footerFirst ? footer : useful } })
+        .mockResolvedValueOnce({ data: { text: footerFirst ? useful : footer } })
+        .mockResolvedValueOnce({ data: { text: footer } }),
+      terminate: vi.fn().mockResolvedValue(undefined),
+    };
+    mocks.createWorker.mockResolvedValue(worker);
+    const result = await runOcr(file, options, vi.fn(), new AbortController().signal, scoreOcrText);
+    expect(result).toMatchObject({ text: useful, passes: 3, selectedAttempt: footerFirst ? 1 : 0 });
+    expect(scoreOcrText(footer).score).toBeLessThan(scoreOcrText(useful).score);
+    expect(scoreOcrText(useful).good).toBe(false);
+    expect(parseReceiptText(result.text).receipt.items[0]).toMatchObject({ lineTotalCents: null, flagged: true });
+    expect(worker.terminate).toHaveBeenCalled();
+  });
+
+  it.each([false, true])("selects a better original-colour reading only with supported quantity evidence = %s", async (quantityHeading) => {
+    setup();
+    // 1d retains the original unheaded reading as the negative case. Only the
+    // separately headed variant satisfies the unchanged selection policy.
+    const clear = `EXAMPLE CAFE\n${quantityHeading ? "Description Qty Amount\n" : ""}Iced Tea 2 6.00\nTotal (INCL GST) 6.00\nGST 0.50`;
+    const worker = {
+      setParameters: vi.fn().mockResolvedValue(undefined),
+      recognize: vi.fn()
+        .mockResolvedValueOnce({ data: { text: footer } })
+        .mockResolvedValueOnce({ data: { text: useful } })
+        .mockResolvedValueOnce({ data: { text: clear } }),
+      terminate: vi.fn().mockResolvedValue(undefined),
+    };
+    mocks.createWorker.mockResolvedValue(worker);
+    const result = await runOcr(file, options, vi.fn(), new AbortController().signal, scoreOcrText);
+    expect(result).toMatchObject({ text: quantityHeading ? clear : useful, passes: 3, selectedAttempt: quantityHeading ? 2 : 1 });
+    expect(result.attempts.map(a => a.preprocessing)).toEqual(["flattened", "flattened", "original"]);
+    expect(result.attempts[0]!.score).toBeNull(); // JSON-safe representation of no items
+    expect(result.attempts[2]!.score).toBeGreaterThan(result.attempts[1]!.score!);
+    expect(result.attempts[2]!.good).toBe(quantityHeading);
+  });
+
+  it("does not replace recovered rows with an unaccepted colour reading just for a higher score", async () => {
+    setup();
+    const richer = "EXAMPLE STORE\nProduct Qty Total\nCoffee 1 4.00\nFruit Muffin 1\nCheese Sandwich 1";
+    const sparse = "EXAMPLE STORE\nProduct Qty Total\nCoffee 1 4.00";
+    expect(scoreOcrText(sparse).score).toBeGreaterThan(scoreOcrText(richer).score);
+    expect(scoreOcrText(sparse).good).toBe(false);
+    const worker = {
+      setParameters: vi.fn().mockResolvedValue(undefined),
+      recognize: vi.fn()
+        .mockResolvedValueOnce({ data: { text: richer } })
+        .mockResolvedValueOnce({ data: { text: richer } })
+        .mockResolvedValueOnce({ data: { text: sparse } }),
+      terminate: vi.fn().mockResolvedValue(undefined),
+    };
+    mocks.createWorker.mockResolvedValue(worker);
+    const result = await runOcr(file, options, vi.fn(), new AbortController().signal, scoreOcrText);
+    expect(result).toMatchObject({ text: richer, passes: 3, selectedAttempt: 0 });
+    expect(result.attempts[2]!.text).toBe(sparse);
+  });
+
+  it("allows an uncertain colour reading to rescue two footer-only readings", async () => {
+    setup();
+    const worker = {
+      setParameters: vi.fn().mockResolvedValue(undefined),
+      recognize: vi.fn()
+        .mockResolvedValueOnce({ data: { text: footer } })
+        .mockResolvedValueOnce({ data: { text: footer } })
+        .mockResolvedValueOnce({ data: { text: useful } }),
+      terminate: vi.fn().mockResolvedValue(undefined),
+    };
+    mocks.createWorker.mockResolvedValue(worker);
+    const result = await runOcr(file, options, vi.fn(), new AbortController().signal, scoreOcrText);
+    expect(result).toMatchObject({ text: useful, passes: 3, selectedAttempt: 2 });
+    expect(parseReceiptText(result.text).receipt.items[0]).toMatchObject({ flagged: true, lineTotalCents: null });
+  });
+
+  it("keeps the richer body and recovers only a corroborated alternate total", async () => {
+    setup();
+    const first = "EXAMPLE MARKET\nROLLED GRAINS 400G\n[ 4.20 V\nSALTED SPREAD 200G\n| 3.10\nPAPER BAG 1 0.10\nDENTAL PICKS 50M\n: % 230";
+    const second = "EXAMPLE MARKET\nROLLED GRAINS 400G\n: 4.20 V 2\nSALTED SPREAD 200G\n: | 3.10 7\nPAPER BAG 1 0.10\nDENTAL PICKS 50M\n| 2 JNO 4\nTotal 17.40\nVISA 17.40";
+    const worker = {
+      setParameters: vi.fn().mockResolvedValue(undefined),
+      recognize: vi.fn()
+        .mockResolvedValueOnce({ data: { text: first } })
+        .mockResolvedValueOnce({ data: { text: second } })
+        .mockResolvedValueOnce({ data: { text: footer } }),
+      terminate: vi.fn().mockResolvedValue(undefined),
+    };
+    mocks.createWorker.mockResolvedValue(worker);
+    const result = await runOcr(file, options, vi.fn(), new AbortController().signal, scoreOcrText);
+    expect(result).toMatchObject({ text: first, passes: 3, selectedAttempt: 0 });
+    const parsed = parseOcrResult(result).receipt;
+    expect(parsed.items.map(i => i.lineTotalCents)).toEqual([420, 310, 10, null]);
+    // 1d: PAPER BAG's unheaded trailing 1 is now unresolved too.
+    expect(parsed.items.filter(i => i.flagged)).toHaveLength(4);
+    expect(parsed.items[2]).toMatchObject({ description: "PAPER BAG 1", quantityExact: null, lineTotalCents: 10 });
+    expect(parsed.receiptTotalCents).toBe(1740);
+    expect(parsed.rawOcrText).toBe(first);
+    expect(scoreOcrText(second).good).toBe(false);
+  });
+
+  it("keeps ties and leaves unresolved values flagged", async () => {
+    setup();
+    const worker = { setParameters: vi.fn().mockResolvedValue(undefined), recognize: vi.fn().mockResolvedValue({ data: { text: useful } }), terminate: vi.fn().mockResolvedValue(undefined) };
+    mocks.createWorker.mockResolvedValue(worker);
+    const result = await runOcr(file, options, vi.fn(), new AbortController().signal, scoreOcrText);
+    expect(result.selectedAttempt).toBe(0);
+    expect(parseReceiptText(result.text).receipt.items[0]).toMatchObject({ flagged: true, lineTotalCents: null });
+  });
+
+  it("skips additional image variants when the first reading is accepted", async () => {
+    const bitmap = setup();
+    const worker = { setParameters: vi.fn().mockResolvedValue(undefined), recognize: vi.fn().mockResolvedValue({ data: { text: "Accepted text" } }), terminate: vi.fn().mockResolvedValue(undefined) };
+    mocks.createWorker.mockResolvedValue(worker);
+    const result = await runOcr(file, options, vi.fn(), new AbortController().signal, scorer);
+    expect(result.passes).toBe(1);
+    expect(worker.recognize).toHaveBeenCalledOnce();
+    expect(bitmap.close).toHaveBeenCalledOnce();
+  });
+});
 
 describe("OCR resource cleanup", () => {
   it("does not start decoding for an already cancelled scan", async () => {

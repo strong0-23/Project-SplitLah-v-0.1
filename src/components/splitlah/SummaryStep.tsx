@@ -6,6 +6,8 @@ import { formatMoney } from "@/lib/money";
 import { summaryText } from "@/lib/summary";
 import { Button, Card, Notice } from "./ui";
 import { Shell } from "./Shell";
+import { ReceiptStatus } from "./ReceiptStatus";
+import { assessReceipt } from "@/lib/receipt-status";
 
 export function SummaryStep({ go }: { go: (s: "scan" | "split") => void }) {
   const bill = useBill();
@@ -13,6 +15,7 @@ export function SummaryStep({ go }: { go: (s: "scan" | "split") => void }) {
   const [status, setStatus] = useState<string | null>(null);
   const [showText, setShowText] = useState(false);
   const textRef = useRef<HTMLTextAreaElement>(null);
+  if (assessReceipt(bill.receipt).status !== "Ready") return <Shell step="summary" footer={<Button block onClick={() => go("split")}>Back to split and review</Button>}><ReceiptStatus receipt={bill.receipt} /></Shell>;
 
   if (!calc.ok) {
     return (
@@ -58,6 +61,7 @@ export function SummaryStep({ go }: { go: (s: "scan" | "split") => void }) {
           {c.totals.serviceCents > 0 && ` · service ${formatMoney(c.totals.serviceCents)}`}
           {c.totals.gstAddedCents > 0 && ` · GST ${formatMoney(c.totals.gstAddedCents)}`}
           {c.totals.gstIncludedCents > 0 && ` · incl. GST ${formatMoney(c.totals.gstIncludedCents)}`}
+          {c.totals.roundingCents !== undefined && ` · bill rounding ${formatMoney(c.totals.roundingCents)}`}
         </p>
       </div>
       {status && <Notice tone="success">{status}</Notice>}

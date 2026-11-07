@@ -3,7 +3,9 @@ import { emptyReceipt, sampleSession } from "@/lib/defaults";
 import { newId } from "@/lib/ids";
 import { clearSession, loadSession, saveSession, type Session } from "@/lib/storage";
 import { BillContext as Ctx } from "./bill-context";
-import type { ItemAssignment, Participant, Receipt, ReceiptItem } from "@/lib/types";
+import type { ItemAssignment, ItemField, Participant, Receipt, ReceiptField, ReceiptItem } from "@/lib/types";
+import { confirmItemField, confirmReceiptField, makeEvidence, updateItemWithEvidence } from "@/lib/receipt-quality";
+import { applySavedPreferences, loadSavedPreferences } from "@/lib/preferences";
 
 type Notice = null | "corrupt" | "unavailable" | "save-failed";
 
@@ -17,6 +19,8 @@ export interface BillCtx extends Session {
   loadSample: () => void;
   addItem: () => void;
   updateItem: (id: string, patch: Partial<ReceiptItem>) => void;
+  confirmItem: (id: string, field: ItemField) => void;
+  confirmReceipt: (field: ReceiptField) => void;
   removeItem: (id: string) => void;
   addParticipant: (name: string) => void;
   renameParticipant: (id: string, name: string) => void;
@@ -26,7 +30,9 @@ export interface BillCtx extends Session {
 }
 
 
-const blank = (): Session => ({ receipt: emptyReceipt(), participants: [], assignments: {} });
+const blank = (): Session => ({ receipt: applySavedPreferences(emptyReceipt(), loadSavedPreferences()), participants: [], assignments: {} });
+const draftItem = (): ReceiptItem => ({ id: newId("i"), description: "", quantity: 1, quantityExact: { numerator: 1, denominator: 1 }, lineTotalCents: null,
+  evidence: { description: makeEvidence("unknown"), quantity: makeEvidence("defaulted", [], ["Default quantity — please check."]), lineTotalCents: makeEvidence("unknown") } });
 
 export function sanitizeText(s: string, max: number): string {
   // Strip control chars; React escapes everything else on render.
@@ -63,16 +69,18 @@ export function BillProvider({ children }: { children: ReactNode }) {
     setReceipt: (fn) => update((s) => ({ ...s, receipt: fn(s.receipt) })),
     startManual: () => {
       const s = blank();
-      s.receipt.items = [{ id: newId("i"), description: "", quantity: 1, lineTotalCents: null }];
+      s.receipt.items = [draftItem()];
       setSession(s); setHasSession(true);
     },
-    startFromReceipt: (r) => { setSession({ receipt: r, participants: [], assignments: {} }); setHasSession(true); },
+    startFromReceipt: (r) => { setSession({ receipt: applySavedPreferences(r, loadSavedPreferences()), participants: [], assignments: {} }); setHasSession(true); },
     loadSample: () => { setSession(sampleSession()); setHasSession(true); },
-    addItem: () => update((s) => ({ ...s, receipt: { ...s.receipt, items: [...s.receipt.items, { id: newId("i"), description: "", quantity: 1, lineTotalCents: null }] } })),
+    addItem: () => update((s) => ({ ...s, receipt: { ...s.receipt, items: [...s.receipt.items, draftItem()] } })),
     updateItem: (id, patch) => update((s) => ({
       ...s,
-      receipt: { ...s.receipt, items: s.receipt.items.map((it) => (it.id === id ? { ...it, ...patch, flagged: patch.flagged ?? false } : it)) },
+      receipt: { ...s.receipt, items: s.receipt.items.map((it) => (it.id === id ? updateItemWithEvidence(it, patch) : it)) },
     })),
+    confirmItem: (id, field) => update(s => ({ ...s, receipt: { ...s.receipt, items: s.receipt.items.map(item => item.id === id ? confirmItemField(item, field) : item) } })),
+    confirmReceipt: field => update(s => ({ ...s, receipt: confirmReceiptField(s.receipt, field) })),
     removeItem: (id) => update((s) => {
       const { [id]: _drop, ...rest } = s.assignments;
       return { ...s, receipt: { ...s.receipt, items: s.receipt.items.filter((i) => i.id !== id) }, assignments: rest };

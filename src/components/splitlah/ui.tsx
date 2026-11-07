@@ -1,7 +1,7 @@
 import { useEffect, useId, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
-import { centsToInput, parseMoney } from "@/lib/money";
+import { centsToInput, parseMoney, parseSignedMoney } from "@/lib/money";
 import type { Cents } from "@/lib/types";
 
 const button = cva(
@@ -56,15 +56,15 @@ export function Label({ htmlFor, children, hint }: { htmlFor: string; children: 
 }
 
 /** Text input bound to integer cents. Keeps the typed string locally; reports null when blank. */
-export function MoneyInput({ label, hint, value, onChange, flagged, id: idProp, compact }: {
-  label: string; hint?: ReactNode; value: Cents | null; onChange: (c: Cents | null) => void; flagged?: boolean | undefined; id?: string; compact?: boolean;
+export function MoneyInput({ label, hint, value, onChange, flagged, id: idProp, compact, allowNegative = false }: {
+  label: string; hint?: ReactNode; value: Cents | null; onChange: (c: Cents | null) => void; flagged?: boolean | undefined; id?: string; compact?: boolean; allowNegative?: boolean;
 }) {
   const auto = useId();
   const id = idProp ?? auto;
   const [text, setText] = useState(centsToInput(value));
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    const parsed = text.trim() === "" ? null : parseMoney(text);
+    const parsed = text.trim() === "" ? null : (allowNegative ? parseSignedMoney(text) : parseMoney(text));
     if (parsed !== value && !error) setText(centsToInput(value));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
@@ -86,8 +86,8 @@ export function MoneyInput({ label, hint, value, onChange, flagged, id: idProp, 
             const t = e.target.value.slice(0, 14);
             setText(t);
             if (t.trim() === "") { setError(null); onChange(null); return; }
-            const c = parseMoney(t);
-            if (c === null) setError("Enter an amount like 12.50");
+            const c = allowNegative ? parseSignedMoney(t) : parseMoney(t);
+            if (c === null) { setError("Enter an amount like 12.50"); onChange(null); }
             else { setError(null); onChange(c); }
           }}
         />

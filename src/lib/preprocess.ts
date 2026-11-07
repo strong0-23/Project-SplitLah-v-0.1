@@ -9,13 +9,28 @@ export interface Pixels {
   height: number;
 }
 
-/** Luminance greyscale + illumination flattening. Returns a new RGBA buffer (grey in RGB). */
-export function flattenIllumination(src: Pixels, radius?: number): Pixels {
+/** Blue is an opt-in diagnostic channel; normal scans retain luminance processing. */
+export type GrayscaleChannel = "luminance" | "blue";
+
+/** Grayscale without lighting correction. Returns an independent, opaque RGBA buffer. */
+export function grayscale(src: Pixels, channel: GrayscaleChannel = "luminance"): Pixels {
+  const { data, width, height } = src;
+  const out = new Uint8ClampedArray(width * height * 4);
+  for (let p = 0; p < out.length; p += 4) {
+    const value = channel === "blue" ? data[p + 2]! : 0.299 * data[p]! + 0.587 * data[p + 1]! + 0.114 * data[p + 2]!;
+    out[p] = out[p + 1] = out[p + 2] = value;
+    out[p + 3] = 255;
+  }
+  return { data: out, width, height };
+}
+
+/** Grayscale + illumination flattening. Default luminance processing stays unchanged. */
+export function flattenIllumination(src: Pixels, radius?: number, channel: GrayscaleChannel = "luminance"): Pixels {
   const { width: w, height: h, data } = src;
   const n = w * h;
   const grey = new Float32Array(n);
   for (let i = 0, p = 0; i < n; i++, p += 4) {
-    grey[i] = 0.299 * data[p]! + 0.587 * data[p + 1]! + 0.114 * data[p + 2]!;
+    grey[i] = channel === "blue" ? data[p + 2]! : 0.299 * data[p]! + 0.587 * data[p + 1]! + 0.114 * data[p + 2]!;
   }
   const r = radius ?? Math.max(12, Math.round(Math.min(w, h) / 45));
   // Integral image for O(1) box means.

@@ -1,0 +1,27 @@
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import path from 'node:path';
+const [baselinePath, datasetFolder] = process.argv.slice(2);
+if (!baselinePath || !datasetFolder) throw new Error('Usage: node tools/ocr-engine-sandbox/freeze-control.mjs <private baseline.json> <private dataset folder>');
+const out = path.resolve('receipt-regression.local/engine-comparison');
+if (existsSync(path.join(out, 'control-freeze.json'))) throw new Error('Control already frozen. Preserve it; do not overwrite an existing experiment.');
+const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+const git = args => execFileSync('git.exe', args, { encoding: 'utf8' });
+mkdirSync(out, { recursive: true });
+const files = [...new Set(git(['ls-files','-z','--cached','--others','--exclude-standard']).split('\0').filter(Boolean))].sort();
+const sources = files.map(file => {
+  const bytes = readFileSync(file);
+  const target = path.join(out, 'control-source', file);
+  mkdirSync(path.dirname(target), { recursive: true }); writeFileSync(target, bytes);
+  return { path: file, bytes: bytes.length, sha256: hash(bytes) };
+});
+const baseline = JSON.parse(readFileSync(baselinePath, 'utf8'));
+const datasetPath = path.join(datasetFolder, 'dataset.json');
+const dataset = JSON.parse(readFileSync(datasetPath, 'utf8'));
+const privateInputs = [baselinePath, datasetPath, ...dataset.receipts.flatMap(r => r.image ? [path.join(datasetFolder, r.image)] : [])].map(file => ({ path: file, sha256: hash(readFileSync(file)) }));
+const dependencies = Object.fromEntries(['tesseract.js','tesseract.js-core','vite','vitest','typescript'].map(name => [name, JSON.parse(readFileSync(`node_modules/${name}/package.json`, 'utf8')).version]));
+writeFileSync(path.join(out, 'recorded-baseline.json'), readFileSync(baselinePath));
+writeFileSync(path.join(out, 'control-working-diff.patch'), execFileSync('git.exe', ['diff','--binary']));
+writeFileSync(path.join(out, 'control-freeze.json'), JSON.stringify({ createdAt: new Date().toISOString(), branch: git(['branch','--show-current']).trim(), head: git(['rev-parse','HEAD']).trim(), status: git(['status','--porcelain=v1']), node: process.version, dependencies, baseline: { path: baselinePath, runtime: baseline.userAgent, revision: baseline.revision, createdAt: baseline.createdAt }, sources, privateInputs, settings: { entry: 'src/lib/ocr.ts runOcr', scorer: 'src/lib/scan-score.ts scoreOcrText', coordinator: 'src/lib/receipt-reading.ts parseOcrResult', parser: 'src/lib/parser.ts parseReceiptText', scanOptions: 'dataset options; no diagnostic image overrides', references: 'post-extraction evaluation only' } }, null, 2));
+console.log(`Frozen ${sources.length} working-tree files without a Git commit.`);
