@@ -6,7 +6,17 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist", ".output", ".vinxi"] },
+  // tools/receipt-regression/baseline is a verbatim, read-only copy of parser-v2 (dev-only baseline).
+  // The owner's reference contract (tools/receipt-regression/reference-format) is used unchanged.
+  {
+    ignores: [
+      "dist",
+      ".output",
+      ".vinxi",
+      "tools/receipt-regression/baseline/**",
+      "tools/receipt-regression/reference-format/*.mjs",
+    ],
+  },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],

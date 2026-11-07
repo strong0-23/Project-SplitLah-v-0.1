@@ -1,0 +1,7 @@
+EXAMPLE BOWL SHOP
+Product Qty Total
+RICE BOWL(GST*) 1 $10.90
+Discount $0.90
+Subtotal $10.90
+GST included $0.90
+Total $10.00

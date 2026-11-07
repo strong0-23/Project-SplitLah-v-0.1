@@ -1,0 +1,332 @@
+{
+  "schema_version": "splitlah-independent-reference-draft-1",
+  "approval_status": "pending_user_approval_do_not_label",
+  "annotation": {
+    "author_id": "",
+    "verified_at": "",
+    "written_independently_of_ocr": null,
+    "receipt_id": {
+      "state": "not_yet_verified",
+      "value": null
+    },
+    "partition": {
+      "state": "not_yet_verified",
+      "value": null
+    },
+    "merchant_layout_group_id": {
+      "state": "not_yet_verified",
+      "value": null
+    },
+    "photo_condition_tags": {
+      "state": "not_yet_verified",
+      "value": null
+    },
+    "currency": {
+      "state": "not_yet_verified",
+      "value": null,
+      "evidence": null
+    },
+    "notes": ""
+  },
+  "inventory_verification": {
+    "all_product_rows_accounted_for": {
+      "state": "not_yet_verified",
+      "value": null
+    },
+    "all_returns_and_adjustments_accounted_for": {
+      "state": "not_yet_verified",
+      "value": null
+    },
+    "all_discounts_accounted_for": {
+      "state": "not_yet_verified",
+      "value": null
+    },
+    "all_charges_and_taxes_accounted_for": {
+      "state": "not_yet_verified",
+      "value": null
+    },
+    "absence_checks": [
+      {
+        "role": "",
+        "state": "not_yet_verified",
+        "verified_absent": null,
+        "evidence": null
+      }
+    ]
+  },
+  "products": [
+    {
+      "reference_row_id": "",
+      "description": {
+        "state": "not_yet_verified",
+        "value": null,
+        "evidence": null
+      },
+      "row_kind": {
+        "state": "not_yet_verified",
+        "value": null,
+        "evidence": null
+      },
+      "quantity": {
+        "state": "not_yet_verified",
+        "value": null,
+        "unit_of_measure": {
+          "state": "not_yet_verified",
+          "value": null,
+          "evidence": null
+        },
+        "evidence": null
+      },
+      "unit_price": {
+        "state": "not_yet_verified",
+        "value_cents": null,
+        "price_basis": {
+          "state": "not_yet_verified",
+          "quantity": null,
+          "unit_of_measure": null,
+          "evidence": null
+        },
+        "tax_treatment": {
+          "state": "not_yet_verified",
+          "value": null,
+          "evidence": null
+        },
+        "evidence": null
+      },
+      "full_line_amount": {
+        "state": "not_yet_verified",
+        "value_cents": null,
+        "discount_treatment": {
+          "state": "not_yet_verified",
+          "value": null,
+          "evidence": null
+        },
+        "tax_treatment": {
+          "state": "not_yet_verified",
+          "value": null,
+          "evidence": null
+        },
+        "evidence": null
+      },
+      "notes": ""
+    }
+  ],
+  "discounts": [
+    {
+      "reference_adjustment_id": "",
+      "description": {
+        "state": "not_yet_verified",
+        "value": null,
+        "evidence": null
+      },
+      "scope": {
+        "state": "not_yet_verified",
+        "value": null,
+        "evidence": null
+      },
+      "applies_to_reference_row_ids": {
+        "state": "not_yet_verified",
+        "value": null
+      },
+      "printed_amount": {
+        "state": "not_yet_verified",
+        "value_cents": null,
+        "evidence": null
+      },
+      "already_reflected_in_full_line_amounts": {
+        "state": "not_yet_verified",
+        "value": null,
+        "evidence": null
+      },
+      "financial_role": {
+        "state": "not_yet_verified",
+        "value": null,
+        "evidence": null
+      },
+      "notes": ""
+    }
+  ],
+  "returns_and_adjustments": [
+    {
+      "reference_adjustment_id": "",
+      "description": {
+        "state": "not_yet_verified",
+        "value": null,
+        "evidence": null
+      },
+      "kind": {
+        "state": "not_yet_verified",
+        "value": null,
+        "evidence": null
+      },
+      "applies_to_reference_row_ids": {
+        "state": "not_yet_verified",
+        "value": null
+      },
+      "printed_amount": {
+        "state": "not_yet_verified",
+        "value_cents": null,
+        "evidence": null
+      },
+      "already_reflected_in_full_line_amounts": {
+        "state": "not_yet_verified",
+        "value": null,
+        "evidence": null
+      },
+      "notes": ""
+    }
+  ],
+  "charges": [
+    {
+      "reference_charge_id": "",
+      "kind": {
+        "state": "not_yet_verified",
+        "value": null,
+        "evidence": null
+      },
+      "description": {
+        "state": "not_yet_verified",
+        "value": null,
+        "evidence": null
+      },
+      "printed_amount": {
+        "state": "not_yet_verified",
+        "value_cents": null,
+        "evidence": null
+      },
+      "rate_basis_points": {
+        "state": "not_yet_verified",
+        "value": null,
+        "evidence": null
+      },
+      "already_included_in_full_line_amounts": {
+        "state": "not_yet_verified",
+        "value": null,
+        "evidence": null
+      },
+      "notes": ""
+    }
+  ],
+  "gst": {
+    "printed_amount": {
+      "state": "not_yet_verified",
+      "value_cents": null,
+      "evidence": null
+    },
+    "inclusion_mode": {
+      "state": "not_yet_verified",
+      "value": null,
+      "evidence": null
+    },
+    "rate_basis_points": {
+      "state": "not_yet_verified",
+      "value": null,
+      "evidence": null
+    },
+    "notes": ""
+  },
+  "printed_payable_total": {
+    "state": "not_yet_verified",
+    "value_cents": null,
+    "evidence": null
+  },
+  "independent_reference_notes": {
+    "payment_and_change_context": {
+      "state": "not_yet_verified",
+      "value": null,
+      "evidence": null
+    },
+    "unresolved_essential_fields": [],
+    "adjudication_notes": ""
+  },
+  "eligibility": {
+    "rubric_status": "draft_pending_user_approval",
+    "primary_comparison": {
+      "state": "not_yet_verified",
+      "value": null
+    },
+    "affected_unscorable_assessments": [],
+    "reasons": []
+  },
+  "preparation_extension": {
+    "schema_version": "splitlah-batch2-reference-extension-proposal-1",
+    "approval_status": "pending_owner_approval_before_new_extension_labelling_or_execution",
+    "approved_base": {
+      "approval_record": "receipt-regression.local/batch1/reference/approval.json",
+      "approval_record_sha256": "74975edb58ff2fe847b7ac2ec350c398f1249641f602e109b87f66810bb5b7ae",
+      "identities": [
+        {
+          "filename": "reference-template.json",
+          "sha256": "5f2934267bfdd448184b8573afb83124fb52a48216ae5ecd6f148eed0e2e1a1c"
+        },
+        {
+          "filename": "annotation-guide.md",
+          "sha256": "d1405c3b1c59fa8624e75c916aa602ed3fc8cc6afbd471d18889536a8fe5ea49"
+        }
+      ],
+      "note": "Base template/guide approved. Their embedded pending labels are historical text; this record governs base-only approval. Extensions and eligibility rules remain proposals."
+    },
+    "source": {
+      "image_sha256": null,
+      "reference_version": "",
+      "model_access": "not_authorised_by_this_template",
+      "scope": "owner_private"
+    },
+    "association_annotations": [
+      {
+        "reference_row_id": "",
+        "original_source_anchor": {
+          "state": "not_yet_verified",
+          "value": null,
+          "evidence": null
+        },
+        "discriminates_product_from_neighbours": {
+          "state": "not_yet_verified",
+          "value": null,
+          "evidence": null
+        },
+        "independently_written_before_predictions": null,
+        "notes": ""
+      }
+    ],
+    "rounding": {
+      "inventory_complete": {
+        "state": "not_yet_verified",
+        "value": null,
+        "evidence": null
+      },
+      "adjustments": [
+        {
+          "reference_rounding_id": "",
+          "label": {
+            "state": "not_yet_verified",
+            "value": null,
+            "evidence": null
+          },
+          "signed_amount": {
+            "state": "not_yet_verified",
+            "value_cents": null,
+            "evidence": null
+          },
+          "application_stage": {
+            "state": "not_yet_verified",
+            "value": null,
+            "evidence": null
+          },
+          "already_reflected_in_printed_payable_total": {
+            "state": "not_yet_verified",
+            "value": null,
+            "evidence": null
+          },
+          "notes": ""
+        }
+      ]
+    },
+    "independently_calculated_payable_target": {
+      "state": "not_yet_verified",
+      "value_cents": null,
+      "evidence": null
+    },
+    "calculation_notes": "Calculated reference target, if independently supported, stays distinct from printed payable total; never reverse-calculate unreadable product values."
+  }
+}
