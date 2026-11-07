@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>SplitLah local receipt regression</title>
+    <style>
+      body {
+        font: 16px system-ui;
+        max-width: 1100px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+        background: #f7f8fa;
+        color: #17212d;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+        margin: 0.4rem;
+        padding: 0.4rem;
+      }
+      button {
+        cursor: pointer;
+      }
+      pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        background: #edf0f3;
+        padding: 1rem;
+      }
+      article {
+        background: white;
+        border: 1px solid #ccd3da;
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 1rem 0;
+      }
+      label {
+        display: block;
+      }
+      details {
+        margin: 0.75rem 0;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+      td,
+      th {
+        border: 1px solid #ccd3da;
+        padding: 0.4rem;
+        text-align: left;
+      }
+      .fail {
+        color: #a11212;
+      }
+      .pass {
+        color: #145f26;
+      }
+      .unknown {
+        color: #775700;
+      }
+      img {
+        max-width: 100%;
+        max-height: 600px;
+      }
+      #status {
+        white-space: pre-wrap;
+      }
+      textarea {
+        width: 100%;
+        min-height: 9rem;
+        font:
+          14px ui-monospace,
+          monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Local receipt regression: parser-v2 vs rework</h1>
+    <p>
+      Each receipt's text is read by <b>both</b> parsers: the parser-v2 baseline (frozen copy,
+      commit a80f7e3) and the rework parser this branch ships. Files stay in this browser's memory.
+      Photos are never uploaded; recognizer assets download on first OCR use.
+    </p>
+    <label>Dataset folder <input id="dataset" type="file" webkitdirectory multiple /></label>
+    <label
+      >Mode
+      <select id="mode">
+        <option value="parser">Parser only (verified transcript)</option>
+        <option value="ocr">Browser OCR + parser (one OCR reading, both parsers)</option>
+      </select></label
+    >
+    <label
+      >Code revision / experiment label
+      <input id="revision" placeholder="e.g. commit SHA + local changes"
+    /></label>
+    <label
+      >Earlier report to compare with (optional) <input id="baseline" type="file" accept=".json"
+    /></label>
+    <button id="run" disabled>Run sequential suite</button
+    ><button id="cancel" disabled>Cancel suite</button
+    ><button id="save" disabled>Download full report (private)</button>
+    <p id="status" role="status">
+      Select a folder containing dataset.json and its referenced files.
+    </p>
+    <h2>Summary scores (safe to share: receipt IDs and counts only)</h2>
+    <textarea id="summary" readonly placeholder="Appears after a run."></textarea>
+    <button id="copy" disabled>Copy summary scores</button>
+    <div id="results"></div>
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html>

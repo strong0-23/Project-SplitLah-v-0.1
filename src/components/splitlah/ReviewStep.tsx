@@ -3,6 +3,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { sanitizeText, useBill } from "@/hooks/use-bill";
 import { computeTotals } from "@/lib/bill";
 import { formatMoney, formatRate, MAX_QUANTITY, parseRate } from "@/lib/money";
+import { hasFoldedFees } from "@/lib/scan";
 import type { ReceiptItem } from "@/lib/types";
 import { Button, Card, Label, MoneyInput, Notice, Segmented, Toggle } from "./ui";
 import { Shell } from "./Shell";
@@ -70,6 +71,8 @@ export function ReviewStep({ go }: { go: (s: "scan" | "split") => void }) {
   const totals = computeTotals(r);
   const set = (patch: Partial<typeof r>) => setReceipt((x) => ({ ...x, ...patch }));
   const flagged = (f: string) => r.uncertainFields?.includes(f);
+  // D6: delivery/platform fees were folded into the service amount; a % rate can't carry them.
+  const feesDropOut = r.chargeMode === "percentage" && hasFoldedFees(r.ocrWarnings);
   const mismatch = totals.ok ? totals.value.mismatchCents : null;
   const canContinue = totals.ok && mismatch !== null && mismatch === 0 ? true : totals.ok && mismatch === null;
 
@@ -111,6 +114,7 @@ export function ReviewStep({ go }: { go: (s: "scan" | "split") => void }) {
             ? "Service charge is calculated on the subtotal after discount. GST is calculated on that plus service charge."
             : "Use the exact charge amounts printed on the receipt. No percentages are added on top."}
         </p>
+        {feesDropOut && <Notice tone="warning">Your receipt's delivery/platform fees will drop out if you calculate by %.</Notice>}
         {flagged("charges") && <Notice tone="warning">No charges were detected — check whether this receipt has service charge or GST.</Notice>}
 
         <div className="rounded-lg border border-border p-3">
@@ -140,6 +144,9 @@ export function ReviewStep({ go }: { go: (s: "scan" | "split") => void }) {
             <Row k="Item subtotal" v={totals.value.itemSubtotalCents} />
             {r.printedSubtotalCents !== null && r.printedSubtotalCents !== totals.value.itemSubtotalCents && (
               <p className="text-xs text-warning-foreground">Printed subtotal was {formatMoney(r.printedSubtotalCents)}.</p>
+            )}
+            {r.printedNetSubtotalCents != null && (
+              <p className="text-xs text-muted-foreground">Printed pre-tax subtotal: {formatMoney(r.printedNetSubtotalCents)}.</p>
             )}
             {totals.value.discountCents > 0 && <Row k="Discount" v={-totals.value.discountCents} />}
             {r.serviceEnabled && <Row k={`Service charge${r.chargeMode === "percentage" ? ` (${formatRate(r.serviceRateBp)}%)` : ""}`} v={totals.value.serviceCents} />}
@@ -172,3 +179,4 @@ export function ReviewStep({ go }: { go: (s: "scan" | "split") => void }) {
 function Row({ k, v, muted }: { k: string; v: number; muted?: boolean }) {
   return <div className={`flex justify-between ${muted ? "text-muted-foreground" : ""}`}><dt>{k}</dt><dd className="money">{formatMoney(v)}</dd></div>;
 }
+

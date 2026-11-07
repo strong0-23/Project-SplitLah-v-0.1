@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { allocateLargestRemainder, parseMoney, parseRate, applyRate } from "./money";
 import { allocateItem, calculateBill, computeTotals } from "./bill";
 import { emptyReceipt, sampleSession } from "./defaults";
-import { parseReceiptText } from "./parser";
+import { parseReceiptText } from "./scan";
 import type { ItemAssignment, Participant, Receipt } from "./types";
 
 const P: Participant[] = [{ id: "a", name: "A" }, { id: "b", name: "B" }, { id: "c", name: "C" }];
