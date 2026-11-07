@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "receipts": [
+    {
+      "id": "synthetic-exclusive",
+      "image": "synthetic-exclusive.png",
+      "transcript": "synthetic-exclusive.txt",
+      "notes": "Invented data. Unit price is reference metadata, not the line amount.",
+      "expected": {
+        "itemsComplete": true,
+        "items": [{ "description": "TEA", "quantity": 2, "unitPriceCents": 250, "lineTotalCents": 500 }],
+        "discountCents": 0,
+        "serviceChargeCents": 50,
+        "gstCents": 50,
+        "gstInclusive": false,
+        "payableTotalCents": 600
+      }
+    },
+    {
+      "id": "synthetic-inclusive",
+      "image": "synthetic-inclusive.png",
+      "transcript": "synthetic-inclusive.txt",
+      "notes": "Invented layout with GST already included and a discount.",
+      "expected": {
+        "itemsComplete": true,
+        "items": [{ "description": "RICE BOWL", "quantity": 1, "lineTotalCents": 1090 }],
+        "discountCents": 90,
+        "serviceChargeCents": 0,
+        "gstCents": 90,
+        "gstInclusive": true,
+        "payableTotalCents": 1000
+      }
+    }
+  ]
+}

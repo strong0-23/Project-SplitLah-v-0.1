@@ -1,0 +1,7 @@
+EXAMPLE TEA SHOP
+Product Qty Total
+TEA 2 $5.00
+Subtotal $5.00
+Service charge $0.50
+GST $0.50
+Total $6.00
