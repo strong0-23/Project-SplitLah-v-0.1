@@ -2,6 +2,12 @@
  * Local, dev-only receipt regression page (`npm run receipts:dev`). Runs parser-v2 (baseline) and
  * the rework parser on the SAME text for each receipt and applies the Batch 1b merge gate.
  * Files are read into browser memory only; nothing is uploaded or saved unless Download is clicked.
+ *
+ * Sources:
+ * - Owner references (default): a photos folder (REG001.jpg …) and a verified-references folder
+ *   (REG001.owner-inventory-v2.reference.private.json …), paired by REG id, Browser OCR mode.
+ *   Every reference must pass the owner's contract or the run is refused.
+ * - dataset.json (legacy): the parser-v2 harness format, parser or OCR mode.
  */
 import {
   compare,
@@ -12,12 +18,13 @@ import {
   summarise,
   summaryLine,
   type Baseline,
-  type Case,
   type Check,
+  type Expected,
   type ParserUnderTest,
   type ScoredReceipt,
   type SummaryScores,
 } from "./model";
+import { checkReference, pairFiles, toExpected, UNKNOWN_REFERENCE_CREDIT } from "./owner-reference";
 import { PARSERS } from "./parsers";
 import { scanReceipt, validateImageFile, OcrError, type OcrProgress } from "../../src/lib/scan";
 
@@ -29,15 +36,36 @@ const run = $<HTMLButtonElement>("run");
 const cancel = $<HTMLButtonElement>("cancel");
 const save = $<HTMLButtonElement>("save");
 const copy = $<HTMLButtonElement>("copy");
+const source = $<HTMLSelectElement>("source");
+const photosPicker = $<HTMLInputElement>("photos");
+const refsPicker = $<HTMLInputElement>("references");
 const picker = $<HTMLInputElement>("dataset");
 const mode = $<HTMLSelectElement>("mode");
 const baselinePicker = $<HTMLInputElement>("baseline");
 const revision = $<HTMLInputElement>("revision");
+const ownerControls = $("owner-controls");
+const legacyControls = $("legacy-controls");
 let dataset: ReturnType<typeof datasetSchema.parse> | null = null;
 let files = new Map<string, File>();
 let baseline: Baseline | null = null;
 let controller: AbortController | null = null;
 let imageUrls: string[] = [];
+
+/** One receipt to run: the input both parsers read (photo or transcript) and its expected answers. */
+interface RunCase {
+  id: string;
+  expected: Expected;
+  input: File;
+  image: File | null;
+  scanOptions: {
+    rotation: null | 0 | 90 | 180 | 270;
+    crop: null | { left: number; top: number; right: number; bottom: number };
+  };
+  /** Extra bytes in the fingerprint (the reference file), so a changed reference isn't compared. */
+  referenceText: string | null;
+  /** Unscorable known content (counts and codes only). */
+  notes: string[];
+}
 
 type ParserResult = {
   parser: ParserUnderTest["id"];
@@ -56,14 +84,17 @@ type Result = {
   sourceText: string | null;
   parsers: ParserResult[];
   gate: { worse: string[]; pass: boolean } | null;
+  notes: string[];
 };
 type Report = {
   schemaVersion: 1;
+  source: "owner-references" | "dataset";
   mode: "ocr" | "parser";
   revision: string;
   createdAt: string;
   userAgent: string;
   complete: boolean;
+  setupNotes: string[];
   results: Result[];
 };
 let report: Report | null = null;
@@ -73,6 +104,7 @@ const hash = async (data: BufferSource) =>
     .join("");
 const jsonHash = (value: unknown) => hash(new TextEncoder().encode(JSON.stringify(value)));
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+const fileName = (f: File) => f.webkitRelativePath.split("/").pop() || f.name;
 
 function detail(parent: HTMLElement, title: string, value: unknown) {
   const d = document.createElement("details");
@@ -119,7 +151,7 @@ function scorePanel(parent: HTMLElement, p: ParserResult) {
   detail(parent, `${p.parser}: computed charges and total`, p.totals);
 }
 
-function render(result: Result, receipt: Case) {
+function render(result: Result, c: RunCase) {
   const article = document.createElement("article");
   const heading = document.createElement("h2");
   heading.textContent = result.id;
@@ -131,14 +163,18 @@ function render(result: Result, receipt: Case) {
       ? `Merge gate: PASS (rework matches or beats parser-v2) — ${result.durationMs} ms`
       : `Merge gate: FAIL — rework is worse on: ${result.gate?.worse.join(", ")}`;
   article.append(heading, verdict);
-  const image = receipt.image && files.get(receipt.image);
-  if (image) {
+  if (result.notes.length) {
+    const n = document.createElement("p");
+    n.textContent = `Not scored: ${result.notes.join("; ")}`;
+    article.append(n);
+  }
+  if (c.image) {
     const d = document.createElement("details");
     const s = document.createElement("summary");
-    s.textContent = "Original image: verify the reference manually";
+    s.textContent = "Original photo";
     const img = document.createElement("img");
-    img.alt = `Reference image for ${receipt.id}`;
-    img.src = URL.createObjectURL(image);
+    img.alt = `Photo for ${c.id}`;
+    img.src = URL.createObjectURL(c.image);
     imageUrls.push(img.src);
     d.append(s, img);
     article.append(d);
@@ -150,14 +186,15 @@ function render(result: Result, receipt: Case) {
     result.sourceText ?? "No text",
   );
   detail(article, "OCR stage events", result.diagnostics);
-  detail(article, "Manual reference (never generated from OCR)", receipt.expected);
+  detail(article, "Scored reference fields (known fields only)", c.expected);
   results.append(article);
 }
 
 /** IDs and counts only: this is what the owner sends back. */
 function summaryText(r: Report): string {
   const lines = [
-    `SplitLah Batch 1b merge gate — mode: ${r.mode}; revision: ${r.revision}; ${r.complete ? "complete" : "PARTIAL"} run, ${r.results.length} receipt(s)`,
+    `SplitLah Batch 1b merge gate — source: ${r.source}; mode: ${r.mode}; revision: ${r.revision}; ${r.complete ? "complete" : "PARTIAL"} run, ${r.results.length} receipt(s)`,
+    ...r.setupNotes,
   ];
   for (const res of r.results) {
     if (res.error) {
@@ -165,6 +202,7 @@ function summaryText(r: Report): string {
       continue;
     }
     for (const p of res.parsers) lines.push(summaryLine(res.id, p.parser, p.scores));
+    if (res.notes.length) lines.push(`${res.id} | not scored: ${res.notes.join("; ")}`);
     lines.push(
       `${res.id} | gate: ${res.gate?.pass ? "PASS" : `FAIL (${res.gate?.worse.join(", ")})`}`,
     );
@@ -177,10 +215,30 @@ function summaryText(r: Report): string {
   return lines.join("\n");
 }
 
+function showSource() {
+  const owner = source.value === "owner";
+  ownerControls.hidden = !owner;
+  legacyControls.hidden = owner;
+  run.disabled = owner ? !(photosPicker.files?.length && refsPicker.files?.length) : !dataset;
+}
+source.onchange = showSource;
+photosPicker.onchange = refsPicker.onchange = () => {
+  const p = pairFiles(
+    [...(photosPicker.files ?? [])].map(fileName),
+    [...(refsPicker.files ?? [])].map(fileName),
+  );
+  status.textContent =
+    `Paired by REG id: ${p.pairs.map((x) => x.id).join(", ") || "none yet"}.` +
+    (p.unpaired.length
+      ? `\nUnpaired (not run): ${p.unpaired.map((u) => `${u.id} has no ${u.missing}`).join("; ")}.`
+      : "") +
+    (p.versionNotes.length ? `\n${p.versionNotes.join("\n")}` : "");
+  showSource();
+};
+
 picker.onchange = async () => {
   dataset = null;
   files = new Map();
-  run.disabled = true;
   save.disabled = true;
   copy.disabled = true;
   report = null;
@@ -192,11 +250,11 @@ picker.onchange = async () => {
     const manifest = files.get("dataset.json");
     if (!manifest) throw new Error("Selected folder must contain dataset.json at its root.");
     dataset = datasetSchema.parse(JSON.parse(await manifest.text()));
-    status.textContent = `Loaded ${dataset.receipts.length} receipts. Null/omitted answers are unverified. Choose a mode, enter a revision label, then run.`;
-    run.disabled = false;
+    status.textContent = `Loaded ${dataset.receipts.length} receipts. Null/omitted answers are unverified.`;
   } catch (e) {
     status.textContent = `Dataset error: ${message(e)}`;
   }
+  showSource();
 };
 baselinePicker.onchange = async () => {
   baseline = null;
@@ -204,23 +262,109 @@ baselinePicker.onchange = async () => {
     const f = baselinePicker.files?.[0];
     if (!f) return;
     baseline = baselineSchema.parse(JSON.parse(await f.text()));
-    status.textContent = `Baseline loaded (${baseline.mode}, revision: ${baseline.revision}).`;
+    status.textContent = `Earlier report loaded (${baseline.mode}, revision: ${baseline.revision}).`;
   } catch (e) {
-    status.textContent = `Baseline error: ${message(e)}`;
+    status.textContent = `Earlier report error: ${message(e)}`;
   }
 };
 cancel.onclick = () => controller?.abort();
 copy.onclick = () => void navigator.clipboard?.writeText(summaryBox.value);
 
+/**
+ * Owner references: pair by REG id, read ONLY the paired reference files, validate every one with
+ * the contract. Returns null (and explains) if the run must be refused.
+ */
+async function ownerCases(): Promise<{ cases: RunCase[]; setupNotes: string[] } | null> {
+  const photos = new Map([...(photosPicker.files ?? [])].map((f) => [fileName(f), f]));
+  const refs = new Map([...(refsPicker.files ?? [])].map((f) => [fileName(f), f]));
+  const p = pairFiles([...photos.keys()], [...refs.keys()]);
+  if (!p.pairs.length) {
+    status.textContent =
+      "Refused: no photo and reference share a REG id (REG001.jpg ↔ REG001.owner-inventory-vN.reference.private.json).";
+    return null;
+  }
+  const failures: string[] = [];
+  const cases: RunCase[] = [];
+  for (const pair of p.pairs) {
+    const text = await refs.get(pair.reference)!.text();
+    let json: unknown;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      failures.push(`${pair.id}: $ not_valid_json`);
+      continue;
+    }
+    const check = checkReference(json, pair.id);
+    if (!check.ok) {
+      for (const e of check.errors) failures.push(`${pair.id}: ${e.path} ${e.code}`);
+      continue;
+    }
+    const { expected, notes } = toExpected(json);
+    const photo = photos.get(pair.photo)!;
+    cases.push({
+      id: pair.id,
+      expected,
+      input: photo,
+      image: photo,
+      scanOptions: { rotation: null, crop: null },
+      referenceText: text,
+      notes,
+    });
+  }
+  if (failures.length) {
+    status.textContent = `Refused: ${failures.length} contract error(s). Fix the reference(s) and run again. Paths and codes only:\n${failures.join("\n")}`;
+    return null;
+  }
+  const setupNotes = [
+    `references: ${cases.length} passed the contract; scoring known fields only (unknownReferenceCredit: ${UNKNOWN_REFERENCE_CREDIT})`,
+    ...(p.unpaired.length
+      ? [`unpaired, not run: ${p.unpaired.map((u) => `${u.id} (no ${u.missing})`).join(", ")}`]
+      : []),
+    ...p.versionNotes,
+  ];
+  return { cases, setupNotes };
+}
+
+function datasetCases(m: "ocr" | "parser"): RunCase[] | null {
+  if (!dataset) return null;
+  const out: RunCase[] = [];
+  for (const r of dataset.receipts) {
+    const path = m === "ocr" ? r.image : r.transcript;
+    const file = path ? files.get(path) : undefined;
+    if (!file) {
+      status.textContent = `Missing ${m === "ocr" ? "image" : "verified transcript"} file for ${r.id}.`;
+      return null;
+    }
+    const image = r.image ? (files.get(r.image) ?? null) : null;
+    out.push({
+      id: r.id,
+      expected: r.expected,
+      input: file,
+      image,
+      scanOptions: r.scanOptions,
+      referenceText: null,
+      notes: [],
+    });
+  }
+  return out;
+}
+
 run.onclick = async () => {
-  if (!dataset || controller) return;
+  if (controller) return;
   if (!revision.value.trim()) {
     status.textContent = "Enter a code revision / experiment label for reproducibility.";
     return;
   }
+  const owner = source.value === "owner";
+  const runMode: "ocr" | "parser" = owner ? "ocr" : (mode.value as "ocr" | "parser");
+  const prepared = owner ? await ownerCases() : { cases: datasetCases(runMode), setupNotes: [] };
+  if (!prepared || !prepared.cases) return;
+  const { cases, setupNotes } = prepared as { cases: RunCase[]; setupNotes: string[] };
+
   controller = new AbortController();
   const signal = controller.signal;
-  for (const element of [run, picker, mode, revision, baselinePicker]) element.disabled = true;
+  for (const el of [run, picker, photosPicker, refsPicker, source, mode, revision, baselinePicker])
+    el.disabled = true;
   cancel.disabled = false;
   save.disabled = true;
   copy.disabled = true;
@@ -230,19 +374,21 @@ run.onclick = async () => {
   summaryBox.value = "";
   report = {
     schemaVersion: 1,
-    mode: mode.value as "ocr" | "parser",
+    source: owner ? "owner-references" : "dataset",
+    mode: runMode,
     revision: revision.value.trim(),
     createdAt: new Date().toISOString(),
     userAgent: navigator.userAgent,
     complete: false,
+    setupNotes,
     results: [],
   };
   try {
-    for (const receipt of dataset.receipts) {
+    for (const c of cases) {
       if (signal.aborted) break;
       const start = performance.now();
       const result: Result = {
-        id: receipt.id,
+        id: c.id,
         fingerprint: "",
         durationMs: 0,
         error: null,
@@ -250,43 +396,40 @@ run.onclick = async () => {
         sourceText: null,
         parsers: [],
         gate: null,
+        notes: c.notes,
       };
       let stage = "input";
       try {
-        const path = report.mode === "ocr" ? receipt.image : receipt.transcript;
-        const file = path ? files.get(path) : undefined;
-        if (!file)
-          throw new Error(
-            `Missing ${report.mode === "ocr" ? "image" : "verified transcript"} file for ${receipt.id}.`,
-          );
-        const inputHash = await hash(await file.arrayBuffer());
+        const inputHash = await hash(await c.input.arrayBuffer());
         result.fingerprint = await jsonHash({
           inputHash,
-          expected: receipt.expected,
-          scanOptions: report.mode === "ocr" ? receipt.scanOptions : null,
+          expected: c.expected,
+          reference:
+            c.referenceText === null ? null : await hash(new TextEncoder().encode(c.referenceText)),
+          scanOptions: runMode === "ocr" ? c.scanOptions : null,
         });
         if (signal.aborted) throw new Error("Cancelled");
-        if (report.mode === "ocr") {
-          const invalid = validateImageFile(file);
+        if (runMode === "ocr") {
+          const invalid = validateImageFile(c.input);
           if (invalid) throw new Error(invalid);
           stage = "ocr";
           // One OCR reading (the app's own scan path); both parsers then read its text.
           const scanned = await scanReceipt(
-            file,
-            receipt.scanOptions,
+            c.input,
+            c.scanOptions,
             (p) => {
               result.diagnostics.push({ ...p, elapsedMs: Math.round(performance.now() - start) });
-              status.textContent = `${receipt.id}: ${p.stage} — ${p.status} (${Math.round(p.progress * 100)}%)`;
+              status.textContent = `${c.id}: ${p.stage} — ${p.status} (${Math.round(p.progress * 100)}%)`;
             },
             signal,
           );
           result.sourceText = scanned.receipt.rawOcrText ?? "";
-        } else result.sourceText = await file.text();
+        } else result.sourceText = await c.input.text();
         stage = "parser";
         for (const parser of PARSERS) {
           const p = parser as unknown as ParserUnderTest;
           const parsed = p.parse(result.sourceText);
-          const checks = evaluate(receipt.expected, parsed.receipt, p);
+          const checks = evaluate(c.expected, parsed.receipt, p);
           result.parsers.push({
             parser: p.id,
             checks,
@@ -307,9 +450,9 @@ run.onclick = async () => {
       }
       result.durationMs = Math.round(performance.now() - start);
       report.results.push(result);
-      render(result, receipt);
+      render(result, c);
     }
-    report.complete = !signal.aborted && report.results.length === dataset.receipts.length;
+    report.complete = !signal.aborted && report.results.length === cases.length;
     summaryBox.value = summaryText(report);
     const flat = {
       mode: report.mode,
@@ -324,12 +467,14 @@ run.onclick = async () => {
       ),
     };
     const changes = baseline ? compare(flat, baseline).join("\n") : "No earlier report loaded.";
-    status.textContent = `${report.complete ? "Suite finished" : "Suite cancelled (partial report)"}: ${report.results.length}/${dataset.receipts.length} receipts.\n${changes}`;
+    status.textContent = `${report.complete ? "Suite finished" : "Suite cancelled (partial report)"}: ${report.results.length}/${cases.length} receipts.\n${changes}`;
   } catch (e) {
     status.textContent = `Harness error: ${message(e)}`;
   } finally {
     controller = null;
-    for (const element of [run, picker, mode, revision, baselinePicker]) element.disabled = false;
+    for (const el of [picker, photosPicker, refsPicker, source, mode, revision, baselinePicker])
+      el.disabled = false;
+    showSource();
     cancel.disabled = true;
     save.disabled = !report;
     copy.disabled = !summaryBox.value;
@@ -349,7 +494,8 @@ save.onclick = () => {
   );
   const a = document.createElement("a");
   a.href = url;
-  a.download = `receipt-${report.mode}-${report.createdAt.replace(/[:.]/g, "-")}.json`;
+  a.download = `receipt-${report.source}-${report.mode}-${report.createdAt.replace(/[:.]/g, "-")}.json`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
+showSource();

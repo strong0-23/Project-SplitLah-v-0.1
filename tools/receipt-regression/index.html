@@ -84,14 +84,40 @@
       commit a80f7e3) and the rework parser this branch ships. Files stay in this browser's memory.
       Photos are never uploaded; recognizer assets download on first OCR use.
     </p>
-    <label>Dataset folder <input id="dataset" type="file" webkitdirectory multiple /></label>
     <label
-      >Mode
-      <select id="mode">
-        <option value="parser">Parser only (verified transcript)</option>
-        <option value="ocr">Browser OCR + parser (one OCR reading, both parsers)</option>
+      >Source
+      <select id="source">
+        <option value="owner">Owner references: photos + verified references (Browser OCR)</option>
+        <option value="dataset">dataset.json folder (legacy format)</option>
       </select></label
     >
+    <fieldset id="owner-controls">
+      <legend>Owner references (paired by REG id)</legend>
+      <label
+        >Photos folder (e.g. development-working; only REG001.jpg … are read)
+        <input id="photos" type="file" webkitdirectory multiple
+      /></label>
+      <label
+        >Verified references folder (e.g. owner-worksheet/reference-versions;
+        REG001.owner-inventory-v2.reference.private.json …)
+        <input id="references" type="file" webkitdirectory multiple
+      /></label>
+      <small
+        >Every reference is checked with the owner's contract; one failure refuses the run. Only
+        fields with state "known" are scored.</small
+      >
+    </fieldset>
+    <fieldset id="legacy-controls" hidden>
+      <legend>dataset.json (legacy)</legend>
+      <label>Dataset folder <input id="dataset" type="file" webkitdirectory multiple /></label>
+      <label
+        >Mode
+        <select id="mode">
+          <option value="parser">Parser only (verified transcript)</option>
+          <option value="ocr">Browser OCR + parser (one OCR reading, both parsers)</option>
+        </select></label
+      >
+    </fieldset>
     <label
       >Code revision / experiment label
       <input id="revision" placeholder="e.g. commit SHA + local changes"
@@ -102,9 +128,7 @@
     <button id="run" disabled>Run sequential suite</button
     ><button id="cancel" disabled>Cancel suite</button
     ><button id="save" disabled>Download full report (private)</button>
-    <p id="status" role="status">
-      Select a folder containing dataset.json and its referenced files.
-    </p>
+    <p id="status" role="status">Select the photos folder and the verified references folder.</p>
     <h2>Summary scores (safe to share: receipt IDs and counts only)</h2>
     <textarea id="summary" readonly placeholder="Appears after a run."></textarea>
     <button id="copy" disabled>Copy summary scores</button>

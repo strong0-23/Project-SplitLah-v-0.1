@@ -7,7 +7,16 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   // tools/receipt-regression/baseline is a verbatim, read-only copy of parser-v2 (dev-only baseline).
-  { ignores: ["dist", ".output", ".vinxi", "tools/receipt-regression/baseline/**"] },
+  // The owner's reference contract (tools/receipt-regression/reference-format) is used unchanged.
+  {
+    ignores: [
+      "dist",
+      ".output",
+      ".vinxi",
+      "tools/receipt-regression/baseline/**",
+      "tools/receipt-regression/reference-format/*.mjs",
+    ],
+  },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],

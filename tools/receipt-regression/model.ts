@@ -29,6 +29,9 @@ export const expectedSchema = z
             quantity: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullish(),
             lineTotalCents: knownCents,
             unitPriceCents: knownCents, // reference metadata only; never scored
+            // An item-scope discount printed separately from this row's line amount (owner format).
+            // Either placement scores the same: taken off the item (D2) or left on the bill.
+            itemDiscountCents: knownCents,
           })
           .strict(),
       )
@@ -39,6 +42,8 @@ export const expectedSchema = z
     gstCents: knownCents,
     gstInclusive: z.boolean().nullish(),
     payableTotalCents: knownCents,
+    // Signed cash rounding already reflected in the printed payable total (owner format), if known.
+    roundingCents: z.number().int().nullish(),
   })
   .strict();
 export const datasetSchema = z
@@ -138,6 +143,8 @@ export interface ParserUnderTest<R extends ScoredReceipt = ScoredReceipt> {
   computeTotals(r: R): Totals;
   /** null when the parser itself says the quantity is unknown (parser-v2's `quantityExact: null`). */
   knownQuantity(item: R["items"][number]): number | null;
+  /** Splits on the unrounded total (D4): its totals are compared with payable − known rounding. */
+  splitsUnroundedTotal?: boolean;
 }
 
 /**
@@ -147,8 +154,12 @@ export interface ParserUnderTest<R extends ScoredReceipt = ScoredReceipt> {
 export function evaluate<R extends ScoredReceipt>(
   expected: Expected,
   actual: R | null,
-  parser: Pick<ParserUnderTest<R>, "computeTotals" | "knownQuantity">,
+  parser: Pick<ParserUnderTest<R>, "computeTotals" | "knownQuantity" | "splitsUnroundedTotal">,
 ): Check[] {
+  /** Which actual item each expected item matched (for the silent-error rule). */
+  const matched = new Map<string, number>();
+  /** Item discounts this parser did not take off their item: then they belong in the bill discount. */
+  let itemDiscountsOnBill = 0;
   const checks: Check[] = [];
   const check = (key: string, want: unknown, got: unknown) =>
     checks.push({
@@ -168,12 +179,24 @@ export function evaluate<R extends ScoredReceipt>(
       const occurrence = (occurrences.get(name) ?? 0) + 1;
       occurrences.set(name, occurrence);
       const key = `item:${name}#${occurrence}`;
-      const index = [...unused].find((i) => norm(actual!.items[i]!.description) === name);
+      // Exact name first; otherwise the name followed by a note the app added in brackets
+      // ("DRY MEE POK (MEMBER DISC -1.00)", D2/D3 notes).
+      const index =
+        [...unused].find((i) => norm(actual!.items[i]!.description) === name) ??
+        [...unused].find((i) => norm(actual!.items[i]!.description).startsWith(`${name} (`));
+      if (index !== undefined) matched.set(key, index);
       const found = index === undefined ? undefined : actual!.items[index];
       if (index !== undefined) unused.delete(index);
       check(`${key}:present`, true, !!found);
       check(`${key}:quantity`, item.quantity, found ? parser.knownQuantity(found) : null);
-      check(`${key}:lineTotalCents`, item.lineTotalCents, found?.lineTotalCents);
+      let wantLine = item.lineTotalCents;
+      const d = item.itemDiscountCents ?? 0;
+      if (d > 0 && wantLine != null) {
+        if (found && found.lineTotalCents === wantLine - d)
+          wantLine -= d; // placed on the item (D2)
+        else itemDiscountsOnBill += d;
+      }
+      check(`${key}:lineTotalCents`, wantLine, found?.lineTotalCents);
       checks.push({
         key: `${key}:unitPriceCents (reference only)`,
         status: "unknown",
@@ -185,7 +208,11 @@ export function evaluate<R extends ScoredReceipt>(
     check("extraItemCount", 0, unused.size);
   } else check("extraItemCount (incomplete reference)", null, unused.size);
   const totals = actual ? parser.computeTotals(actual) : null;
-  check("discountCents", expected.discountCents, actual?.discountCents);
+  check(
+    "discountCents",
+    expected.discountCents == null ? null : expected.discountCents + itemDiscountsOnBill,
+    actual?.discountCents,
+  );
   check(
     "serviceChargeCents",
     expected.serviceChargeCents,
@@ -209,13 +236,14 @@ export function evaluate<R extends ScoredReceipt>(
           : null,
   );
   check("gstInclusive", expected.gstInclusive, actual?.gstInclusive);
-  check("printedPayableTotalCents", expected.payableTotalCents, actual?.receiptTotalCents);
-  check(
-    "computedPayableTotalCents",
-    expected.payableTotalCents,
-    totals?.ok ? totals.value.totalCents : null,
-  );
-  if (actual) for (const c of checks) c.silent = isSilent(c, actual, totals, norm);
+  const payable =
+    expected.payableTotalCents == null
+      ? null
+      : expected.payableTotalCents -
+        (parser.splitsUnroundedTotal ? (expected.roundingCents ?? 0) : 0);
+  check("printedPayableTotalCents", payable, actual?.receiptTotalCents);
+  check("computedPayableTotalCents", payable, totals?.ok ? totals.value.totalCents : null);
+  if (actual) for (const c of checks) c.silent = isSilent(c, actual, totals, matched);
   return checks;
 }
 
@@ -232,16 +260,17 @@ function isSilent(
   c: Check,
   r: ScoredReceipt,
   totals: Totals | null,
-  norm: (s: string) => string,
+  matched: Map<string, number>,
 ): boolean {
   if (c.status !== "fail") return false;
   const unsure = (f: string) => !!r.uncertainFields?.includes(f);
   const matches = !!totals?.ok && totals.value.mismatchCents === 0;
-  const itemNamed = (name: string) => r.items.find((i) => norm(i.description) === name);
   const m = /^item:(.*)#\d+:(present|quantity|lineTotalCents)$/.exec(c.key);
   if (m) {
     if (m[2] === "present") return matches && !unsure("items");
-    return !itemNamed(m[1]!)?.flagged;
+    const at = matched.get(c.key.replace(/:(?:quantity|lineTotalCents)$/, ""));
+    // A missing item is judged once, by its "present" check.
+    return at !== undefined && !r.items[at]?.flagged;
   }
   const extra = /^extra:(\d+):/.exec(c.key);
   if (extra) return !r.items[Number(extra[1])]?.flagged;

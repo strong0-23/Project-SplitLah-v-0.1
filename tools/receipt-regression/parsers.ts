@@ -23,6 +23,7 @@ export const rework: ParserUnderTest<ReworkReceipt> = {
   // The rework has no "unknown quantity" field: the quantity shown is the one the bill uses
   // (a doubtful one is flagged, and flags are scored as review signals, not as passes).
   knownQuantity: (item) => item.quantity,
+  splitsUnroundedTotal: true, // D4
 };
 
 export const parserV2: ParserUnderTest<V2Receipt> = {
