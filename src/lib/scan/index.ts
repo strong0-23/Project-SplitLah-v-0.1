@@ -3,7 +3,8 @@
  *
  *   image.ts            pure pixel preprocessing (lighting, paper bounds)
  *   canvas.ts           browser adapter: decode/rotate/crop/scale on a canvas
- *   tesseract-engine.ts OCR engine adapter (swap-in point for other engines)
+ *   tesseract-engine.ts OCR engine adapter (the default engine)
+ *   paddle-engine.ts    dev-only PaddleOCR adapter (Web Worker), reached via engine-select.ts
  *   layout.ts           pure: word boxes → reading-order rows with column gaps
  *   numbers.ts          pure: locale-aware amounts, currency detection
  *   lexicon.ts          pure: receipt vocabulary and label classification
@@ -28,6 +29,7 @@ export {
 } from "./parse";
 export { runOcr, LOAD_TIMEOUT_MS, SCAN_TIMEOUT_MS, type OcrProgress, type OcrResult } from "./scan";
 export { createTesseractEngine } from "./tesseract-engine";
+export { engineFactoryFor } from "./engine-select";
 export {
   OcrCancelled,
   OcrError,
