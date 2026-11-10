@@ -1,0 +1,36 @@
+// Cloudflare Workers config for SplitLah (Batch D). Used by Workers Builds and by local checks:
+//   npx wrangler@4.154.0 deploy --config cloudflare/wrangler.jsonc
+// It lives in cloudflare/ on purpose: nitro (the build) merges any root-level wrangler.json(c)
+// into the config it generates, including inside Lovable's own build. Keeping this file out of
+// the root means the Lovable deploy is not affected while Lovable stays live (see docs/DEPLOY.md).
+// Paths are relative to this file. Free plan only: no bindings, secrets or paid features.
+{
+  "name": "splitlah",
+  // Pinned. Matches the workerd bundled with wrangler 4.154.0; raise it deliberately.
+  "compatibility_date": "2026-10-23",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // `npm run build` (nitro, cloudflare-module preset) writes the server here, already bundled.
+  "main": "../.output/server/index.mjs",
+  "no_bundle": true,
+  "rules": [{ "type": "ESModule", "globs": ["**/*.mjs", "**/*.js"] }],
+
+  // Client assets. Files that exist are served directly (with public/_headers applied);
+  // everything else goes to the Worker, which server-renders the app.
+  "assets": {
+    "directory": "../.output/public",
+    "binding": "ASSETS"
+  },
+
+  // Free *.workers.dev URL, plus workers.dev Preview URLs for pull-request builds.
+  "workers_dev": true,
+  "preview_urls": true,
+
+  // Turns on the security headers in src/server.ts (CSP etc.). Not a secret.
+  "vars": { "SPLITLAH_SECURITY_HEADERS": "on" },
+
+  // Required by `wrangler preview` (pull-request builds). Previews don't inherit top-level vars.
+  "previews": {
+    "vars": { "SPLITLAH_SECURITY_HEADERS": "on" }
+  }
+}

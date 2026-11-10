@@ -4,6 +4,7 @@
  * stage and time-bounded. Each stage reports its own user-facing error.
  */
 import {
+  assertCanvasReadable,
   autoCrop,
   decodeImage,
   flattenCanvas,
@@ -146,6 +147,7 @@ export async function runOcr(
 
   try {
     report("Opening image", 0);
+    assertCanvasReadable(); // before any download: a blocked canvas makes every read blank
     const decoding = decodeImage(file);
     void decoding.then(
       (b) => {
