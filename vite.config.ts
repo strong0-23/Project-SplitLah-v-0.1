@@ -12,4 +12,11 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
+  vite: {
+    resolve: {
+      // PaddleOCR (dev-only engine, Batch 2b) imports "onnxruntime-web"; use its WASM-only build
+      // (11.2 MB runtime instead of 21.9 MB with WebGPU). Nothing else imports onnxruntime-web.
+      alias: [{ find: /^onnxruntime-web$/, replacement: "onnxruntime-web/wasm" }],
+    },
+  },
 });
