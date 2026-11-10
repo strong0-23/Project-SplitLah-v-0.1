@@ -23,6 +23,11 @@ UI code imports `@/lib/scan` (`index.ts`) only.
 | `image.ts` | Lighting flattening, paper-bounds detection on raw pixel arrays | pure |
 | `canvas.ts` | Decode, rotate, crop, scale to a pixel budget (so long receipts stay legible), preview, file validation | DOM adapter |
 | `tesseract-engine.ts` | Tesseract.js behind `OcrEngine`; SDK is lazy-imported in `load`; worker, core and `eng` model come from the app's own static assets | SDK adapter |
+| `engine-select.ts` | Dev-only engine switch: `engineFactoryFor()` returns a lazy PaddleOCR engine for `?engine=paddle` when the switch is compiled in (dev server, or `VITE_SPLITLAH_ENGINE_SWITCH=on`); otherwise `undefined` (Tesseract). Folds to `undefined` in production builds | adapter (URL) |
+| `paddle-engine.ts` | PaddleOCR behind `OcrEngine` (dev-only challenger), main-thread side: starts the worker, request/response messages, `terminate()` ends the worker. Maps Paddle segments to `OcrWord` (`paddleItemsToPage`). Reached only via `import()` from `engine-select.ts` | SDK adapter |
+| `paddle-runtime.ts` | Worker-side message handler: creates the SDK, loads models, runs `predict` with fixed settings; SDK and image decoding injected (fake SDK in tests) | SDK adapter |
+| `paddle.worker.ts` | Web Worker entry: dynamic-imports `@paddleocr/paddleocr-js`, decodes the Blob on an `OffscreenCanvas`, points ONNX Runtime at its self-built same-origin files | worker |
+| `paddle-assets.ts` | Pinned Paddle settings: SDK/runtime versions, self-hosted model paths with size + SHA-256, create options, predict settings, the provisional 120 s load limit | pure |
 | `tesseract-assets.ts` | Pinned self-hosted Tesseract files (`public/tesseract/`): versions, paths, size + SHA-256 manifest, same-origin URLs | pure |
 | `layout.ts` | Word boxes → reading-order rows; wide gaps kept as a two-space column mark | pure |
 | `numbers.ts` | Locale-aware amounts (1,234.56 / 1.234,56 / zero-decimal), negatives, OCR digit fixes, currency detection | pure |
@@ -33,7 +38,7 @@ UI code imports `@/lib/scan` (`index.ts`) only.
 | `scan.ts` | Workflow: decode → load engine → orient → crop/flatten → recognise → optional 2nd pass. Cancellable (`AbortSignal`), time-bounded, engine injected | workflow |
 | `index.ts` | Public API: `scanReceipt`, `parseReceiptText`, `parseReceiptLines`, `validateImageFile`, `preparePreview`, error types | — |
 
-Tests (synthetic text only): `receipt-types.test.ts` (one fixture per receipt style and per real-receipt pattern P1–P5; each must reconcile with `computeTotals`), `parser-v2-port.test.ts` (parser-v2's parser tests, adapted), `parser-v2-port-2a.test.ts` (the remaining parser-v2 parsing rules, Batch 2a), `tesseract-assets.test.ts` (self-hosted files match their manifest and the installed packages; the adapter uses same-origin paths only), `parse.test.ts`, `modules.test.ts`, `scan.test.ts` (workflow with a fake engine).
+Tests (synthetic text only): `receipt-types.test.ts` (one fixture per receipt style and per real-receipt pattern P1–P5; each must reconcile with `computeTotals`), `parser-v2-port.test.ts` (parser-v2's parser tests, adapted), `parser-v2-port-2a.test.ts` (the remaining parser-v2 parsing rules, Batch 2a), `tesseract-assets.test.ts` (self-hosted files match their manifest and the installed packages; the adapter uses same-origin paths only), `parse.test.ts`, `modules.test.ts`, `scan.test.ts` (workflow with a fake engine), `paddle-engine.test.ts` (Paddle adapter contract with a fake SDK and an in-process worker: word-box format, cancel, timeout, terminate; the dev switch; model archive hashes; exact package pins).
 
 ## Dev-only tool: `tools/receipt-regression/`
 
@@ -44,6 +49,7 @@ Local harness for the owner's scored runs (`npm run receipts:dev`, `receipts:tes
 ```ts
 interface OcrEngine {
   readonly name: string;
+  readonly loadTimeoutMs?: number; // optional per-engine load limit; default LOAD_TIMEOUT_MS (60 s)
   load(onProgress: (p: EngineProgress) => void): Promise<void>; // may fetch model files only
   recognize(image: Blob, layout: LayoutHint): Promise<OcrPage>; // the image never leaves the device
   terminate(): Promise<void>; // safe to call twice, and while load/recognize is in flight
@@ -68,6 +74,9 @@ UI (ScanStep.tsx)
         │         ├─▶ layout.ts
         │         └─▶ tesseract-engine.ts ─▶ (lazy) tesseract.js
         │                                └─▶ tesseract-assets.ts (pinned /tesseract/* paths)
+        ├─▶ engine-select.ts ─▶ (lazy, dev builds only) paddle-engine.ts ─▶ Worker: paddle.worker.ts
+        │                                                                    └─▶ paddle-runtime.ts ─▶ (lazy) @paddleocr/paddleocr-js
+        │                   └─▶ paddle-assets.ts (pinned /paddle/* paths, settings)
         └─▶ parse.ts ─▶ items.ts ─▶ lexicon.ts
                     ├─▶ numbers.ts ─▶ ../money.ts
                     ├─▶ lexicon.ts
@@ -79,4 +88,6 @@ Rules:
 - Pure modules import no DOM, React or SDK code.
 - `scan.ts` does not import the parser; `index.ts` passes a scorer in, so the workflow stays parser-agnostic.
 - The parser does not know which engine produced the text, so swapping engines needs no parser change (D5).
+- Nothing imports `paddle-engine.ts` statically; it is reached only through `import()` in
+  `engine-select.ts`, inside a branch that is a build-time `false` in production.
 - `scan/` may import `bill.ts`, `money.ts`, `types.ts`, `defaults.ts`, `ids.ts`; nothing in those imports `scan/`.

@@ -1,27 +1,33 @@
-# Batch 2b (preparation): Paddle measurements, adapter design, Tesseract self-hosting
+# Batch 2b: PaddleOCR adapter (dev-only), model self-hosting, Tesseract self-hosting
 
-**Branch:** `engine-eval`. **Date:** 10–11 Nov 2026. **Status:** stopped at the approval gate.
-Paddle is **not** in `package.json` or `bun.lock`; no Paddle code is in the app. Tesseract
-self-hosting (approved 6 Nov) is implemented.
+**Branch:** `engine-eval` (PR #4). **Dates:** 10–11 Nov 2026. **Status:** Phase 2b complete.
+Paddle is wired in as a **dev-only** challenger engine behind `?engine=paddle`; Tesseract is still
+the only engine in production builds. Phase 2c (the comparison run) has **not** been started.
 
 ## 1. Summary
 
-- **SDK:** `@paddleocr/paddleocr-js@0.4.2` (Apache-2.0), the package and pins the owner's sandbox
-  used (`origin/parser-v2:tools/ocr-engine-sandbox`). It is the latest published version.
-- **First-scan download** (code + runtime + models), lazy-loaded:
-  - as the sandbox configured it: **54.3 MB raw, ≈ 30.2 MB over the wire with gzip,
-    ≈ 27.2 MB with brotli**;
-  - with the WASM-only ONNX Runtime build (recommended): **43.3 MB raw, ≈ 27.9 MB gzip,
-    ≈ 25.9 MB brotli**.
-  - The models (21.5 MB) are about 80% of the brotli figure. Their sizes come from the owner's
-    sandbox record: the model host was **unreachable from this sandbox**.
-- **Initial bundle:** unchanged if Paddle is reached only through `import()` (measured on a scratch
-  build: the entry chunk holds only the import stub; Paddle code sits in separate chunks).
-- **Tesseract self-hosting: done.** Worker, cores and `eng` model are served from `public/tesseract/`
-  at pinned versions with no CDN fallback. A real OCR smoke test in headless Chrome passed **with
-  jsDelivr blocked**, also under a CSP with no jsDelivr and no `blob:`.
+- **Owner decisions applied (11 Nov 2026)**, recorded in `docs/DECISIONS.md`: SDK added at exactly
+  `@paddleocr/paddleocr-js@0.4.2`, WASM-only runtime; models only from the app's own origin; Paddle in
+  a Web Worker; Paddle load limit 120 s (provisional), Tesseract keeps 60 s; dev-only switch; no
+  parser-v2 UI/storage features for the MVP.
+- **Adapter implemented**: `paddle-engine.ts` (behind `OcrEngine`, reached only through `import()`),
+  `paddle-runtime.ts` + `paddle.worker.ts` (SDK in the app's own module worker), `paddle-assets.ts`
+  (pins and settings), `engine-select.ts` (dev switch). No parser change (D5).
+- **Contract tests**: 20 tests with a fake SDK and an in-process worker running the real worker-side
+  code (§5). All pass.
+- **Real Paddle OCR smoke test**: a computer-rendered synthetic receipt scanned in headless Chrome
+  with every external host unresolvable. It reconciled exactly (3 items, total 23.38). **Cold
+  ≈ 8.9 s, warm ≈ 8.9 s** on a desktop over localhost; Tesseract on the same harness 3.9 s / 3.6 s
+  (§6).
+- **Initial client bundle**: no Paddle code. The production entry chunk is byte-identical apart from a
+  chunk-name hash; the routes chunk grows by **50 bytes** (the generic per-engine load limit in
+  `scan.ts`) (§4).
+- **Deploy size**: production build 33.16 MB static + 1.77 MB Worker (the Paddle wiring adds only
+  those 50 bytes; the model archives were already committed). A switch-enabled build is 66.26 MB.
+  Largest file 16.7 MB (15.9 MiB): every file is under Cloudflare's 25 MiB limit (§4).
+- **CSP** (not edited): jsDelivr and `blob:` can be dropped; Paddle needs neither (§7).
 
-## 2. Measured sizes
+## 2. Measured sizes (scratch measurements, 10 Nov)
 
 Measured in `/tmp/paddle-measure` (outside the repo) from `npm ci` of the sandbox's
 `package.json` + `package-lock.json`, and a scratch Vite 8 build whose entry reaches Paddle only via
@@ -79,7 +85,7 @@ was **not observed in a browser** here, because model loading can't start withou
 
 Scratch build: the entry chunk is 2,052 bytes and holds only `import("./paddle-entry")`; everything
 Paddle-related is in lazy chunks. The app's current client entry (`index-*.js` 403.3 kB, routes
-112.0 kB, lazy Tesseract chunk 19.0 kB) is unchanged by this branch because nothing is wired.
+112.0 kB, lazy Tesseract chunk 19.0 kB) was unchanged at the time because nothing was wired (see §4 for the measured result).
 The adapter must reach the SDK only through `import()` inside `load`, like the Tesseract adapter.
 
 ### Hosts reachable from this sandbox
@@ -111,7 +117,32 @@ Note: the SDK's built-in default for ONNX Runtime files points at jsDelivr
 adapter must set `ortOptions.wasmPaths` to self-hosted files that match the installed version
 (the sandbox did this).
 
-## 4. Adapter design: `src/lib/scan/paddle-engine.ts` (not written yet)
+## 3a. Implementation
+
+Design as planned in the earlier version of this report, with these choices:
+
+| Piece | What it does |
+|---|---|
+| `engine-select.ts` | `ENGINE_SWITCH_ENABLED = import.meta.env.DEV \|\| import.meta.env.VITE_SPLITLAH_ENGINE_SWITCH === "on"` (build-time constants). `engineFactoryFor()` reads `location.search` only when enabled and returns a lazy engine for `?engine=paddle`; otherwise `undefined` (Tesseract). The lazy engine `import()`s `paddle-engine.ts` on first `load`, and prefixes its statuses with `[dev]` so a developer sees which engine runs. |
+| `paddle-engine.ts` | Main-thread `OcrEngine`: creates `new Worker(new URL("./paddle.worker.ts", import.meta.url), { type: "module" })`, sends `load`/`recognize` requests with ids, rejects all pending requests on `terminate()` or a worker crash. `terminate()` ends the worker (real cancellation, frees all SDK memory), is idempotent and safe during `load`/`recognize`. `loadTimeoutMs = 120000`. |
+| `paddle-runtime.ts` | Worker-side handler, SDK injected: `PaddleOCR.create({... worker: false, initialize: false, ortOptions: { backend: "wasm", numThreads: 1, simd: true, wasmPaths } })`, `initialize()`, then `predict` with the fixed "Paddle960" settings. The image input is always disposed. |
+| `paddle.worker.ts` | Imports the SDK dynamically; decodes the Blob with `createImageBitmap` + `OffscreenCanvas` into an OpenCV Mat (the SDK's own Blob path needs a DOM canvas, which workers lack). ONNX Runtime's `.mjs` glue and `.wasm` are emitted by Vite from the installed `onnxruntime-web` via `new URL(…, import.meta.url)`, so they always match the runtime JS and are same-origin. |
+| `scan.ts` / `types.ts` | `OcrEngine.loadTimeoutMs?` (optional, additive). The load race uses it; the overall scan limit grows by the extra load time, so recognition keeps its budget. Tesseract sets nothing: 60 s as before. |
+| `vite.config.ts` | Alias `onnxruntime-web` → `onnxruntime-web/wasm` (WASM-only bundle). |
+| `ScanStep.tsx` | One change: passes `engineFactoryFor()` to `scanReceipt`. In production this compiles to `undefined`. |
+| `package.json` | `@paddleocr/paddleocr-js: "0.4.2"` and `onnxruntime-web: "1.22.0"` (exact). onnxruntime-web is the version the SDK already resolves to; it is pinned directly because the alias and worker reference its files, and a test checks both pins against `node_modules`. |
+
+Word boxes: each Paddle segment becomes one `OcrWord` (polygon → bbox, score 0..1 → confidence
+0..100, empty text dropped, text unchanged); `OcrPage.text` is the segments top-to-bottom, then
+left-to-right. `layout.ts` turned them into the same rows as Tesseract's in the smoke test.
+
+### How to run Paddle (developers only)
+
+- `npm run dev`, then open `/?engine=paddle` (verified: same result as below).
+- Or a preview build: `VITE_SPLITLAH_ENGINE_SWITCH=on npm run build`. **Never set this variable for
+  the production deploy.** Without it, `?engine=paddle` is ignored and nothing Paddle is built.
+
+## 3b. Adapter design notes (written before implementation, 10 Nov)
 
 Implements `OcrEngine` from `types.ts`. No parser change (D5).
 
@@ -169,7 +200,112 @@ Implements `OcrEngine` from `types.ts`. No parser change (D5).
   - word boxes in `OcrWord` format (polygon → bbox, score × 100);
   - empty result → `{ text: "", words: [] }`.
 
-## 5. Tesseract self-hosting (implemented)
+## 4. Bundle and deploy size (measured on this branch, 11 Nov 2026)
+
+Builds: `npx vite build` (production), and `VITE_SPLITLAH_ENGINE_SWITCH=on npx vite build`
+(switch compiled in). Baseline: the same build of the previous `engine-eval` head (49ab33e).
+
+### Initial client bundle
+
+| Chunk | Baseline | This branch (production) |
+|---|---:|---:|
+| `index-*.js` (entry) | 403,340 | 403,340 (content identical apart from the routes chunk's hashed name) |
+| `routes-*.js` | 112,048 | 112,098 (+50: `engine.loadTimeoutMs ?? 60000` and the extended overall limit in `scan.ts`; `engineFactoryFor()` compiles to `void 0`) |
+| `src-*.js` (lazy Tesseract adapter) | 18,977 | 18,977 |
+| Paddle chunks, worker, ONNX Runtime | none | **none** |
+
+The production client output contains no "paddle", no `location.search` read and no worker for
+Paddle. The server (SSR) bundle contains no Paddle code either: only the static-asset manifest
+entries for `public/paddle/*` and a comment. With the switch compiled in, the entry chunk is 403,370
+and routes 112,910; Paddle code is only in lazy chunks and the worker.
+
+### Deploy size and Cloudflare limits
+
+| Build | Static assets (`.output/public`) | Worker (`.output/server`) | Files | Largest file |
+|---|---:|---:|---:|---|
+| Production (this branch) | 33,155,316 B | 1,769,200 B | 51 (whole `.output`) | `paddle/PP-OCRv5_mobile_rec.tar` 16,701,440 B (15.9 MiB) |
+| Switch enabled (dev/preview only) | 66,256,755 B | — | — | same |
+
+Switch-enabled build, Paddle files: `paddle.worker-*.js` 10,526,326 (SDK + OpenCV.js),
+`ort-wasm-simd-threaded-*.wasm` 11,210,254, `ort-wasm-simd-threaded-*.mjs` 20,850, the adapter
+1,690, and the SDK's own `worker-entry-*.js` 11,341,486, which is emitted because the SDK references
+it with `new URL()` but is **never loaded** (SDK worker mode is off). Every file is under Cloudflare's
+25 MiB per-file limit.
+
+Note: the two model archives (21.5 MB) are in `public/` and so are deployed with every build,
+production included, although production never loads them. See §9.
+
+### What a browser downloads on the first Paddle scan (measured in the smoke test)
+
+Same-origin only: the adapter chunk, `paddle.worker-*.js`, both model archives, ONNX Runtime's
+`.mjs` and `.wasm`. Raw ≈ 43.3 MB; ≈ 25.9 MB with brotli, ≈ 27.9 MB with gzip (sizes from §2).
+
+## 5. Contract tests (`src/lib/scan/paddle-engine.test.ts`, 20 tests, all pass)
+
+A fake SDK and an in-process "worker" that runs the real `paddle-runtime.ts` handler. No real
+model, image or receipt.
+
+- **Word-box format**: polygon → bbox, score → 0..100, empty text dropped, reading-order text; empty
+  result → `{ text: "", words: [] }`.
+- **Load**: same-origin model and runtime URLs only (no bcebos, jsDelivr, Hugging Face, unpkg), SDK
+  worker off, WASM backend, one thread; fails cleanly if OpenCV is missing.
+- **Recognize**: fixed settings; the image input is disposed on success and on SDK failure.
+- **Terminate**: ends the worker, rejects a running recognition, is safe to repeat; terminate during
+  load stops the load; a crashed worker fails the pending request; the lazy dev engine stops if
+  terminated before it loads.
+- **Through the real `runOcr` workflow**: end-to-end read; **cancel** during recognition ends the
+  worker; **timeout**: still loading after 61 s (Tesseract's limit), fails at 120 s with stage
+  `load` and ends the worker; the overall limit is extended by 60 s so recognition keeps its time.
+- **Dev switch**: only `?engine=paddle` with the switch enabled selects Paddle; reads the page's
+  query when none is passed.
+- **Pins**: model archives match their size and SHA-256; `package.json` pins and installed versions
+  of the SDK and ONNX Runtime match `paddle-assets.ts`.
+
+## 6. Real Paddle OCR smoke test
+
+**Setup.** Synthetic receipt (invented text: EXAMPLE CAFE, 3 items, subtotal 19.50, service 1.95,
+GST 1.93, total 23.38) rendered as text onto a 700×632 canvas in headless Chrome and saved as PNG.
+Never a real receipt. The switch-enabled build was served locally (same client assets; nitro
+`node-server` preset only so it could run without Wrangler). Playwright drove the real UI: upload →
+"Read receipt" → Review. Chrome ran with `--host-resolver-rules=MAP * ~NOTFOUND` (only localhost
+resolves); probe fetches to jsDelivr and Paddle's official model host both failed.
+
+**Result.** Every run reached Review with all 3 items, subtotal 19.50, service 1.95, GST 1.93,
+calculated total 23.38, "Matches the receipt total exactly". The only requests for engine files were
+same-origin (`/assets/paddle-engine-*`, `/assets/paddle.worker-*`, `/paddle/*.tar`,
+`/assets/ort-wasm-simd-threaded-*.mjs/.wasm`). No external engine request was made.
+
+| Run (desktop, localhost, no throttling) | Total | Engine ready | Orientation probes | Final read | `recognize` calls |
+|---|---:|---:|---:|---:|---:|
+| Paddle, cold (new browser profile) | 8.9 s | 1.6 s | 5.6 s | 1.7 s | 4 |
+| Paddle, warm (same tab, HTTP cache warm) | 8.9 s | 1.5 s | 5.5 s | 1.9 s | 4 |
+| Paddle under a page CSP without jsDelivr/`blob:` | 9.6 s / 9.6 s | | | | 4 |
+| Paddle on `npm run dev` | 10.9 s / 9.2 s | | | | 4 |
+| Tesseract, same harness, page CSP | 3.9 s / 3.6 s | | | | |
+
+Notes:
+- "Warm" still re-creates the engine: `scan.ts` terminates the engine after every scan, so Paddle
+  re-initialises (≈ 1.5 s here) on each scan. Over localhost the download time is near zero; on a
+  phone the cold scan adds the ≈ 26 MB download.
+- Most of Paddle's time is the **orientation probes** (3 low-resolution `recognize` calls before the
+  final read). The shared orientation score counts confident words; Paddle returns phrases, so it
+  reaches the early-stop threshold less often. This is engine tuning for Phase 2c, not changed here.
+- ONNX Runtime logs "Removing initializer … not used" warnings while loading the models; harmless.
+- Not verified: phones, Safari, Firefox, throttled networks, real photos.
+
+## 7. CSP (`src/lib/security-headers.ts` on `main`; not edited)
+
+Tested by adding the CSP to the HTML responses, as the deploy does.
+
+| Change | Evidence | Recommendation |
+|---|---|---|
+| Drop `https://cdn.jsdelivr.net` from `script-src` and `connect-src` | Both engines scanned with `connect-src 'self'` and no jsDelivr in `script-src` | **Do it** once this PR is merged (Tesseract is self-hosted) |
+| Drop `blob:` from `worker-src` | Both engines scanned with `worker-src 'self'` | **Do it** (Tesseract uses `workerBlobURL: false`; Paddle uses a same-origin module worker) |
+| `'wasm-unsafe-eval'` on the page | Both engines also scanned **without** it, because all WebAssembly runs inside the workers | Can be dropped; verify on the deployed preview in Safari and Firefox first |
+| Paddle: `blob:` | Not needed | — |
+| Paddle: `'wasm-unsafe-eval'` / `'unsafe-eval'` | Static assets (including worker scripts) are served **without** a CSP (`public/_headers` sets only `nosniff` and `Referrer-Policy`), so the worker has no policy of its own. When the test gave the worker script the same CSP, Paddle failed to start; it worked once `'unsafe-eval'` was added. Cause: OpenCV.js (embind) builds functions with `Function(...)`. | Keep CSP off static worker scripts, or exempt `/assets/paddle.worker-*` in dev/preview builds only. Never add `'unsafe-eval'` to the page policy. Production never ships Paddle |
+
+## 8. Tesseract self-hosting (implemented in 2b preparation)
 
 **Before:** tesseract.js 5.1.1 defaults: worker from
 `cdn.jsdelivr.net/npm/tesseract.js@v5.1.1/dist/worker.min.js` (started via a `blob:` URL), core
@@ -220,7 +356,25 @@ A device downloads the worker, **one** core and the model: about **7.0 MB raw, �
     is **not done** and not verified.
 - **`vite build`**: `public/tesseract/` is copied to `.output/public/tesseract/` (10.98 MB).
 
-## 6. Owner approval needed
+## 9. For the owner
+
+1. **Phase 2c not started.** It needs your gate (verified reference drafts and explicit authorisation).
+2. **Paddle model archives deployed with production** (21.5 MB, never loaded there). They are in
+   `public/`, so every build ships them. *Option: move them out of `public/` and copy them in only
+   for switch-enabled builds. Small change; not done without your say.*
+3. **`onnxruntime-web@1.22.0` pinned directly** in `package.json`. It is the version the approved SDK
+   already brings in; pinning it keeps the self-built runtime files in step. *Please confirm.*
+4. **CSP follow-up on `main`** (§7): drop jsDelivr and `blob:`; consider dropping `'wasm-unsafe-eval'`
+   after a preview check.
+5. **120 s Paddle load limit** stays provisional until the 2c phone timings.
+6. **Orientation probes** make Paddle ≈ 2.5× slower than Tesseract on desktop (§6). Whether to tune
+   them for Paddle is a 2c question.
+7. **This branch is behind `main`** (Batch D, PR #3, merged after `engine-eval` was cut). Expect
+   overlaps in `package.json`/`bun.lock` when merging; `bun.lock` here still has 14 Lovable-mirror
+   URLs that `main` already replaced.
+8. Offline service worker for the engine files: still deferred (unchanged recommendation).
+
+<details><summary>Approval list from the preparation stage (10 Nov), now decided</summary>
 
 1. **Add the Paddle SDK** as a dependency:
    - packages: `@paddleocr/paddleocr-js@0.4.2`, which brings `onnxruntime-web@1.22.0`,
@@ -242,3 +396,5 @@ A device downloads the worker, **one** core and the model: about **7.0 MB raw, �
 6. **CSP follow-up on `deploy/cloudflare`:** drop jsDelivr and `blob:` after this merges.
    *Recommendation: yes, in that branch's next change.*
 7. **Offline service worker** for the engine files. *Recommendation: defer past MVP.*
+
+</details>

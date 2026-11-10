@@ -89,3 +89,56 @@ is used, and the CSP can drop jsDelivr. The brief approved self-hosting for both
 step 5); Paddle's files wait for the decision on adding Paddle.
 **Where.** `tesseract-assets.ts`, `tesseract-engine.ts`, `public/tesseract/`.
 
+
+## Receipt scanner, Batch 2b: PaddleOCR as a dev-only challenger (owner decisions, 11 Nov 2026)
+
+### PaddleOCR SDK, dev-only, WASM-only runtime
+**Rule.** `@paddleocr/paddleocr-js` is added at exactly `0.4.2`, with `onnxruntime-web` pinned at
+exactly `1.22.0` (the version the SDK already resolves to; pinned so the self-built runtime files
+always match it). Vite aliases `onnxruntime-web` to its WASM-only build (`onnxruntime-web/wasm`),
+so no WebGPU/JSEP runtime is shipped. Paddle is reachable only through the dev-only engine switch
+below; Tesseract stays the default and normal users never get Paddle.
+**Why.** Phase 2c needs both engines in the same build to compare them on evidence. The WASM-only
+runtime is 11.2 MB instead of 21.9 MB and works on every browser the app supports.
+**Where.** `package.json`, `vite.config.ts`, `paddle-assets.ts` (version constants, checked by a test).
+
+### Paddle models self-hosted from the app's own origin
+**Rule.** The PP-OCRv5 mobile det/rec archives committed in `public/paddle/` (sizes and SHA-256 in
+`public/paddle/PROVENANCE.md` and `paddle-assets.ts`, checked by a test) are the only model source.
+They are fetched from the page's own origin; there is no external model host and no CDN fallback.
+**Why.** Same reasons as Tesseract self-hosting: works when third-party hosts are blocked, no third
+party sees app usage, and the CSP needs no extra origins.
+**Where.** `paddle-assets.ts`, `public/paddle/`.
+
+### Paddle runs in a Web Worker
+**Rule.** The SDK runs inside the app's own module worker (`paddle.worker.ts`), with the SDK's own
+worker mode off. The image is posted to the worker as a Blob; `terminate()` ends the worker.
+**Why.** Inference takes seconds; on the main thread it would freeze the UI and could not be
+interrupted. Ending the worker is real cancellation and frees all SDK memory at once.
+**Where.** `paddle-engine.ts` (main-thread side), `paddle-runtime.ts`, `paddle.worker.ts`.
+
+### Paddle load timeout 120 s (PROVISIONAL); Tesseract keeps 60 s
+**Rule.** An engine may set `loadTimeoutMs` on `OcrEngine`; Paddle sets 120 s. The overall scan
+limit grows by the same extra time, so recognition keeps its 150 s budget. Tesseract and any engine
+that sets nothing keep `LOAD_TIMEOUT_MS` (60 s). 120 s is provisional until the Phase 2c phone timings.
+**Why.** Paddle's first download is about 26 MB compressed (models + runtime), versus about 4.4 MB
+for Tesseract; 60 s is too short on slow mobile data.
+**Where.** `types.ts` (`OcrEngine.loadTimeoutMs`), `scan.ts`, `paddle-assets.ts`.
+
+### Dev-only engine switch `?engine=paddle`
+**Rule.** `?engine=paddle` selects PaddleOCR only when the switch is compiled in: in `npm run dev`
+(`import.meta.env.DEV`), or in a build made with `VITE_SPLITLAH_ENGINE_SWITCH=on`. Both are build-time
+constants; in a normal production build the switch folds to "Tesseract", the URL is never read and
+no Paddle code, worker or runtime is emitted. `VITE_SPLITLAH_ENGINE_SWITCH` must never be set for
+the production deploy.
+**Why.** The comparison needs both engines in one build; users must never get the challenger.
+**Where.** `engine-select.ts`, `ScanStep.tsx` (passes `engineFactoryFor()` to `scanReceipt`).
+
+### parser-v2 UI and storage features: none for the MVP
+**Rule.** None of parser-v2's UI/review features (B1–B6) or storage/schema/bill-maths features
+(X1–X6), as listed in `docs/reports/2026-11-parser-v2-port.md` §5–6, is adopted for the MVP.
+D4 stays as it is.
+**Why.** Owner decision, in line with the 2a report's recommendation. These features would change
+the `Receipt` interface, the storage schema, the bill maths or the wizard flow, which is beyond the
+MVP's scope.
+**Where.** No code change; recorded so later work does not port them without a new decision.
