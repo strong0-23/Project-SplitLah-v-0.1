@@ -1,8 +1,10 @@
 /**
  * Tesseract.js adapter behind the `OcrEngine` contract. The SDK is dynamically imported so it never
- * enters the SSR/initial bundle. Worker/core/language files come from the jsDelivr CDN on first use;
- * the image itself never leaves the browser.
+ * enters the SSR/initial bundle. Worker, core and language files are served from the app's own
+ * static assets at pinned versions (`./tesseract-assets`), never from a CDN; the image itself never
+ * leaves the browser. The language model is kept in IndexedDB by tesseract.js after the first load.
  */
+import { tesseractAssetUrls } from "./tesseract-assets";
 import type { EngineProgress, LayoutHint, OcrEngine, OcrPage } from "./types";
 
 type TWorker = Awaited<ReturnType<(typeof import("tesseract.js"))["createWorker"]>>;
@@ -23,6 +25,9 @@ export function createTesseractEngine(lang = "eng"): OcrEngine {
       const mod = await import("tesseract.js");
       if (dead) throw new Error("terminated");
       pending = mod.createWorker(lang, mod.OEM.LSTM_ONLY, {
+        ...tesseractAssetUrls(globalThis.location.origin),
+        // Start the worker from its same-origin URL, not a blob: copy (simpler CSP: worker-src 'self').
+        workerBlobURL: false,
         logger: (m: { status: string; progress: number }) => {
           const status =
             m.status === "recognizing text"

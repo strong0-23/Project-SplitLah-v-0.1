@@ -19,6 +19,7 @@ import {
   INCLUSIVE_NOTE,
   isFinancialNote,
   ITEM_HEADER,
+  mixedTaxBasis,
   MODIFIER,
   NOT_A_NOTE,
   NOT_MERCHANT,
@@ -178,6 +179,9 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
   const nf = detectFormat(texts, currency);
   const lines = texts.map((t) => readLine(t, nf));
   const hasItemHeader = lines.some((l) => !l.amounts.length && qtyColumnsOf(l.text) !== null);
+  /** Unit prices and line amounts printed on different tax bases (parser-v2, Batch 2a). */
+  const mixedBasis = mixedTaxBasis(texts);
+  let mixedBasisRows = 0;
 
   // Merchant: first wordy, unpriced line in the top section that isn't a known heading.
   for (const l of lines.slice(0, 8)) {
@@ -197,6 +201,8 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
   const lineDiscounts: Array<{ item: ReceiptItem; cents: number; desc: string }> = [];
   const savings: number[] = [];
   const roundingRows: Array<{ cents: number | null; text: string; afterItems: boolean }> = [];
+  /** Rounding labels with no readable amount on their line or the next (parser-v2, Batch 2a). */
+  const unreadableRounding: string[] = [];
   let repeatedDiscount = 0;
   let serviceAmt: number | null = null;
   let serviceChargeOnly: number | null = null;
@@ -293,6 +299,19 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
           if (kind === "total" && section !== "footer") damagedTotal ??= cand;
           if (kind === "subtotal") damagedSubtotal ??= cand;
           section = section === "footer" ? "footer" : "summary";
+          continue;
+        }
+      }
+      const roundingLabel =
+        l.kind === "rounding" || /^(?:cash|bill|final)\s+round(?:ing)?\b/i.test(l.words);
+      if (roundingLabel && (items.length > 0 || section !== "items")) {
+        const after = lines[i + 1];
+        const amountBelow =
+          !!after && after.amounts.length === 1 && !after.kind && letterCount(after.label) < 2;
+        if (!amountBelow) {
+          // "Rounding" / "Cash rounding ??": nothing readable to apply. Never inferred from totals.
+          dropPrefix();
+          unreadableRounding.push(l.text);
           continue;
         }
       }
@@ -592,6 +611,16 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
         continue;
       }
       case "total":
+        if (amt.negative && section !== "footer") {
+          // "Total 4.00-": a payable total is never negative on a sale; don't use it (parser-v2).
+          skipped.push(l.text);
+          uncertain.add("total");
+          warnings.push(
+            `A total is printed with a minus sign (“${l.text.slice(0, 40)}”). It was not used; check the total.`,
+          );
+          section = "summary";
+          continue;
+        }
         if (section !== "footer") noteRepair(l.amounts, "total");
         if (section !== "footer")
           totals.push({
@@ -613,6 +642,13 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
     if (section === "footer") continue;
     const row = readItemRow(l.text, l.amounts, l.rawLabel.replace(/^[^\p{L}\p{N}(+>]+/u, ""), cols);
     const ownName = letterCount(row.desc) >= 2;
+    if (mixedBasis && l.amounts.length >= 2 && !amt.negative) {
+      // A unit price and a line amount on different tax bases: a quantity worked out from them
+      // would be wrong, so none is inferred and the row is checked (parser-v2).
+      if (!row.qtyObserved) row.quantity = 1;
+      row.uncertain = true;
+      mixedBasisRows++;
+    }
     if (amt.negative && section !== "header") {
       if (ownName && !MODIFIER.test(l.label)) {
         // "SOAP -3.00": a minus sign on a product is ambiguous (return? discount?). Never a discount.
@@ -621,6 +657,31 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
           "An item has a minus sign. Confirm its line amount and whether it is a discount or a return.",
         );
         uncertain.add("discount");
+        continue;
+      }
+      if (!ownName) {
+        // An unlabelled minus amount ("-1.00") is not known to be a discount (parser-v2). Under a
+        // priced item D2 still takes it off that item, but flagged; anywhere else it is not deducted.
+        const prev = last();
+        const underItem =
+          section === "items" &&
+          !subtotalSeen &&
+          !!prev &&
+          prev.lineTotalCents !== null &&
+          amt.cents <= prev.lineTotalCents;
+        uncertain.add("discount");
+        if (underItem) {
+          addDiscount(amt.cents, "discount");
+          prev.flagged = true;
+          warnings.push(
+            `A minus amount with no label (${fmt(-amt.cents)}) was taken off the item above it. Check that it is a discount.`,
+          );
+        } else {
+          skipped.push(l.text);
+          warnings.push(
+            `A minus amount with no label (${fmt(-amt.cents)}) was not deducted. Check the discount.`,
+          );
+        }
         continue;
       }
       addDiscount(amt.cents, l.label);
@@ -669,7 +730,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
       const s = splitItemLabel(pendingName);
       row.desc = s.desc.slice(0, 80);
       row.taxMarked ||= s.taxMarked;
-      row.uncertain = row.uncertain && letterCount(s.desc) < 4;
+      row.uncertain = (row.uncertain && letterCount(s.desc) < 4) || row.unitPriceOnlyCents !== null;
       if (s.qtyObserved && s.quantity > 1 && row.quantity === 1) {
         row.quantity = s.quantity;
         row.qtyObserved = true;
@@ -683,7 +744,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
     if (row.taxMarked) anyTaxMarked = true;
 
     const prev = last();
-    if (prev && (MODIFIER.test(l.label) || amt.cents === 0)) {
+    if (prev && row.unitPriceOnlyCents === null && (MODIFIER.test(l.label) || amt.cents === 0)) {
       // D3: an add-on belongs to whoever had the item above it.
       if (prev.lineTotalCents !== null) prev.lineTotalCents += amt.cents;
       appendNote(prev, amt.cents ? `${l.label} ${fmt(amt.cents)}` : l.label);
@@ -702,6 +763,12 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
       row.qtyObserved,
     );
     noteRepair(l.amounts, null, item);
+    if (row.unitPriceOnlyCents !== null) {
+      uncertain.add("items");
+      warnings.push(
+        `“${row.desc.slice(0, 40)}” shows a unit price (@ ${fmt(row.unitPriceOnlyCents)}) but no line total, so its price was left empty. Enter its line total.`,
+      );
+    }
     if (OPEN_END.test(row.desc)) openItem = item;
   }
   dropPrefix();
@@ -812,6 +879,16 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
       warnings.push("A rounding line was printed before the items, so it was not applied.");
     } else rounding = row.cents;
   }
+  if (unreadableRounding.length) {
+    uncertain.add("total");
+    warnings.push(
+      `The rounding line “${unreadableRounding[0]!.slice(0, 40)}” has no readable amount, so no rounding was applied. Check the total.`,
+    );
+  }
+  if (rounding !== null && !chosen) {
+    uncertain.add("total");
+    warnings.push("A rounding line was printed but no total was found, so it was not applied.");
+  }
   if (rounding !== null && chosen) {
     const beforeRounding = pool.filter((t) => t.roundingBefore === 0);
     r.receiptTotalCents =
@@ -861,6 +938,13 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
         `The subtotal “${damagedSubtotal.text.slice(0, 40)}” has no decimal point. It was read as ${fmt(damagedSubtotal.cents)} because that matches the items. Please check it.`,
       );
     }
+  }
+
+  if (mixedBasisRows) {
+    uncertain.add("items");
+    warnings.push(
+      "Unit prices and line amounts are printed on different tax bases (incl./excl. GST), so no quantity was worked out from them. Check the highlighted items.",
+    );
   }
 
   // First, so it survives the 20-warning cap on what is stored.

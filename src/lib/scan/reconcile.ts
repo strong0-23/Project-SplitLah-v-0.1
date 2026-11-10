@@ -172,6 +172,9 @@ export function checkChargeRates(
 
 /** Higher = more internally consistent parse. Used to pick between OCR passes. */
 export function scoreParse(r: Receipt): number {
+  // A footer-only reading (no item rows) never replaces one with items, even items that still
+  // need correcting (parser-v2).
+  if (!r.items.length) return Number.NEGATIVE_INFINITY;
   const priced = r.items.filter((i) => i.lineTotalCents !== null);
   const sum = priced.reduce((s, i) => s + (i.lineTotalCents ?? 0), 0);
   let score =

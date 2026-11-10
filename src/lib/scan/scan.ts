@@ -76,11 +76,18 @@ export async function runOcr(
   let timedOut = false;
   const onAbort = () => ctrl.abort();
   if (signal.aborted) throw new OcrCancelled();
+  const engine = (deps.createEngine ?? createTesseractEngine)();
+  // An engine may ask for a longer load limit; the overall bound grows by the same amount, so the
+  // recognition stages keep the time they had.
+  const loadTimeoutMs = engine.loadTimeoutMs ?? LOAD_TIMEOUT_MS;
   signal.addEventListener("abort", onAbort);
-  const timer = setTimeout(() => {
-    timedOut = true;
-    ctrl.abort();
-  }, SCAN_TIMEOUT_MS);
+  const timer = setTimeout(
+    () => {
+      timedOut = true;
+      ctrl.abort();
+    },
+    SCAN_TIMEOUT_MS + Math.max(0, loadTimeoutMs - LOAD_TIMEOUT_MS),
+  );
 
   let stage: OcrStage = "decode";
   let range: [number, number] = [0, 0.05];
@@ -116,7 +123,6 @@ export async function runOcr(
       p.then(res, rej).finally(() => ctrl.signal.removeEventListener("abort", a));
     });
 
-  const engine = (deps.createEngine ?? createTesseractEngine)();
   const killOnAbort = () => {
     void engine.terminate();
   };
@@ -169,7 +175,7 @@ export async function runOcr(
                     "The text recogniser took too long to download. Check your connection and try again.",
                   ),
                 ),
-              LOAD_TIMEOUT_MS,
+              loadTimeoutMs,
             );
           }),
         ]),

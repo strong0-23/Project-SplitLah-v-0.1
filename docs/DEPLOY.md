@@ -17,6 +17,7 @@ with the same purpose. The values to enter are the important part.
 | `cloudflare/wrangler.jsonc` | The Worker config: name `splitlah`, pinned compatibility date, the build output to deploy, workers.dev and Preview URLs. No bindings, secrets or paid features. |
 | `src/server.ts`, `src/lib/security-headers.ts` | Security headers (CSP etc.) on pages the Worker renders. Only switched on by the `SPLITLAH_SECURITY_HEADERS` variable in the Cloudflare config, so the Lovable-hosted app is unchanged. |
 | `public/_headers` | `nosniff` and `Referrer-Policy` on static files. |
+| `paddle-models/`, `vite.config.ts` | Dev-only PaddleOCR model archives, kept out of `public/`; the `splitlah:paddle-models` plugin adds them only to builds with the engine switch on (see "Builds with Paddle on"). |
 
 The config is in `cloudflare/`, not the repository root, on purpose. The build tool (nitro) merges
 any root-level `wrangler.json(c)` into the config it generates, including inside Lovable's own
@@ -96,8 +97,8 @@ Preview URLs (`preview_urls: true`), so this should already be on after the firs
 1. Open the Worker's URL: `https://splitlah.<your-subdomain>.workers.dev`. Your account's subdomain
    is shown on the **Workers & Pages** page as **Your subdomain** (select **Change** to rename it).
 2. Scan a receipt with your phone, check the review screen, then do a split and open the summary.
-   The first scan downloads the OCR model (a few MB) from jsDelivr. The photo itself stays on the
-   phone.
+   The first scan downloads the OCR engine and model (about 4.4 MB compressed) from the app's own
+   address, not a third-party site. The photo itself stays on the phone.
 3. Optional: in a desktop browser, open DevTools → Network, select the page request, and check
    that the response has a `content-security-policy` header.
 
@@ -134,6 +135,52 @@ automatic deploys, Worker → **Settings** → **Builds** → **Disconnect**.
 To see the Cloudflare URL before merging the Batch D pull request, temporarily set the production
 branch (step 3, "Git branch") to `deploy/cloudflare`. After you merge, change it to `main` under
 **Settings** → **Build** → **Branch control**.
+
+## Builds with Paddle on (developers only)
+
+PaddleOCR is a dev-only challenger engine for the engine comparison (Batch 2c). A normal build,
+including every production deploy of `main`, contains **no Paddle files**: its model archives
+(21.5 MB) are kept in `paddle-models/`, outside `public/`, and its runtime is only built when the
+engine switch is on. A build with the switch on adds about 54.6 MB of static files (the two model
+archives, the SDK worker and ONNX Runtime's WASM), and the app then accepts `?engine=paddle`.
+
+The switch is the build variable `VITE_SPLITLAH_ENGINE_SWITCH` with the value `on` (not a secret).
+It has no effect on a build of the production branch `main`: Cloudflare sets `WORKERS_CI_BRANCH`
+on every build, and when that is `main` the build prints
+`VITE_SPLITLAH_ENGINE_SWITCH=on ignored on the production branch` and builds without Paddle.
+(If you ever change the production branch, also change `PRODUCTION_BRANCH` in
+`src/lib/scan/paddle-assets.ts`.)
+
+### Local build with Paddle on
+
+```powershell
+$env:VITE_SPLITLAH_ENGINE_SWITCH = "on"; npm.cmd run build; Remove-Item Env:VITE_SPLITLAH_ENGINE_SWITCH
+npx.cmd wrangler@4.154.0 dev --config cloudflare/wrangler.jsonc
+```
+
+(macOS/Linux: `VITE_SPLITLAH_ENGINE_SWITCH=on npm run build`.) Then open
+<http://localhost:8787/?engine=paddle>. Scan statuses start with `[dev]` while Paddle runs.
+`npm run dev` always has the switch on: open the address it prints with `?engine=paddle` added.
+Run a plain `npm run build` again before anything else, so a later local deploy doesn't pick up
+the Paddle build.
+
+### Paddle on in Cloudflare preview builds
+
+Do this only while you need Paddle in pull-request previews (for example for the Batch 2c run on
+your phone).
+
+1. Open the Worker `splitlah`, then **Settings**, then **Build**, then **Variables and secrets**
+   (the build variables, where `NODE_VERSION` already is; not the runtime **Variables & Secrets**).
+2. Select **Add**, set type **Text**, name `VITE_SPLITLAH_ENGINE_SWITCH`, value `on`, and save.
+3. Push a commit to the pull request's branch (or select **Retry build** on its latest build).
+   Settings only apply to builds started after the change.
+4. Open the Preview URL from the pull request comment with `?engine=paddle` added, for example
+   `https://<preview-url>/?engine=paddle`.
+5. Check the next production build of `main`: its log should show the "ignored on the production
+   branch" line, and `https://splitlah.<your-subdomain>.workers.dev/paddle/PP-OCRv5_mobile_det.tar`
+   should not download a file.
+
+To turn it off, delete the variable in the same place; the next preview build has no Paddle.
 
 ## Running the same checks locally
 

@@ -42,6 +42,11 @@ export interface EngineProgress {
  */
 export interface OcrEngine {
   readonly name: string;
+  /**
+   * Optional time limit for `load`, in ms. When absent the workflow's default (`LOAD_TIMEOUT_MS`)
+   * applies. An engine with a larger first download (PaddleOCR) can ask for more.
+   */
+  readonly loadTimeoutMs?: number;
   load(onProgress: (p: EngineProgress) => void): Promise<void>;
   recognize(image: Blob, layout: LayoutHint): Promise<OcrPage>;
   terminate(): Promise<void>;
