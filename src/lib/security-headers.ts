@@ -5,26 +5,24 @@
  * cloudflare/wrangler.jsonc sets. Lovable's build never sees that file, so the Lovable-hosted app
  * (and its editor preview, which shows the app in an iframe) is unchanged while it stays live.
  *
- * The CSP must still let the on-device OCR run (hard rule 2: recognition stays in the browser):
- * Tesseract starts a Web Worker from a blob: URL, compiles WebAssembly, and downloads its worker,
- * core and language files from jsDelivr until Batch 2b self-hosts them. See
- * docs/reports/2026-11-cloudflare-deploy.md for why each directive is there.
+ * The CSP must still let the on-device OCR run (hard rule 2: recognition stays in the browser).
+ * Both engines are self-hosted (Batch 2b): Tesseract's worker, core and language files and Paddle's
+ * models and runtime come from the app's own origin, and each engine runs in a same-origin Web
+ * Worker (no blob: workers). So no third-party script or connect origin is needed for OCR.
+ * See docs/reports/2026-11-cloudflare-deploy.md for why each directive is there.
  */
-
-/** jsDelivr, where tesseract.js fetches worker.min.js, the WASM core and eng.traineddata. */
-export const OCR_ASSET_ORIGIN = "https://cdn.jsdelivr.net";
 
 export const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   // 'unsafe-inline': TanStack Start renders small inline bootstrap scripts whose contents change
-  // per request (no nonce support wired up yet). 'wasm-unsafe-eval': Tesseract's WebAssembly.
-  // jsDelivr: the blob: worker's importScripts() of Tesseract's worker and core scripts.
-  `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' ${OCR_ASSET_ORIGIN}`,
-  // Tesseract creates its Web Worker from a blob: URL.
-  "worker-src 'self' blob:",
-  // Same-origin requests, plus Tesseract's model/core downloads. Images are never uploaded.
-  `connect-src 'self' ${OCR_ASSET_ORIGIN}`,
-  // Receipt previews are blob: URLs created in the browser.
+  // per request (no nonce support wired up yet). 'wasm-unsafe-eval': kept for WebAssembly. Both
+  // engines worked without it in Chromium, but that is unverified in Firefox and Safari.
+  // Never add 'unsafe-eval' here.
+  "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
+  // OCR workers are started from their same-origin URLs.
+  "worker-src 'self'",
+  // Same-origin requests only (OCR engine and model files are self-hosted). Images are never uploaded.
+  "connect-src 'self'",
   "img-src 'self' blob: data:",
   // Google Fonts stylesheet (src/routes/__root.tsx); React style attributes.
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
@@ -39,7 +37,7 @@ export const CONTENT_SECURITY_POLICY = [
 export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
   "Content-Security-Policy": CONTENT_SECURITY_POLICY,
   "X-Content-Type-Options": "nosniff",
-  // same-origin: no referrer to jsDelivr or Google Fonts, but same-origin requests keep their
+  // same-origin: no referrer to Google Fonts, but same-origin requests keep their
   // Origin header (no-referrer would send "Origin: null" and could trip CSRF checks).
   "Referrer-Policy": "same-origin",
   // Legacy equivalent of frame-ancestors 'none'.
