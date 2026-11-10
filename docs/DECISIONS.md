@@ -171,3 +171,35 @@ D4 stays as it is.
 the `Receipt` interface, the storage schema, the bill maths or the wizard flow, which is beyond the
 MVP's scope.
 **Where.** No code change; recorded so later work does not port them without a new decision.
+
+## Engine comparison, Phase 2c (owner decisions, 11 Nov 2026)
+
+### Dataset size: about 18 receipts, about 6 development and 12 held-out
+**Rule.** The comparison uses about 18 receipts across at least 8 materially distinct layouts,
+split by merchant layout into about 6 development and about 12 held-out receipts (a layout is in
+one set only). This replaces the earlier plan of about 30 receipts (10 development, 20 held-out).
+The decision rule and all its thresholds are unchanged. The report states the smaller sample and its
+lower statistical confidence: each engine's share is shown as a count (x/12) next to the
+percentage, and at n = 12 one receipt is about 8 percentage points.
+**Why.** A smaller set the owner can collect and verify carefully, with every reference written
+independently of OCR, is worth more than a larger, less checked one. Showing counts keeps the
+uncertainty visible: for example, rule (b)'s 10 points means at least 2 more receipts out of 12.
+**Where.** `docs/OWNER-DATASET-GUIDE.md`, `docs/reports/2026-11-engine-comparison.md`,
+`tools/receipt-regression/comparison.ts` (shares shown as x/n with the percentage).
+
+### Scoring: extra correction actions
+**Rule.** A receipt's score is the number of Review-screen field actions a user must make to reach
+a correct bill, against the owner's verified reference, counting only fields whose state is
+"known": +1 per missing reference product (add); +1 per extra product row (delete); +1 per wrong
+quantity on a matched product; +1 per wrong line amount on a matched product; +1 for each wrong
+charge field (discount, service and GST amounts, and GST inclusive/exclusive when known); +1 if the
+printed total field is wrong. The calculated total is derived and never an action. Products are
+matched with the harness's existing matching, unchanged. A receipt "needs at most 2 extra
+corrections" when this count is 2 or less; a failed or timed-out scan never does, and stays in the
+denominator.
+**Why.** It measures what the owner cares about (how much fixing a scan needs) in a way that is
+simple to check. It simplifies the owner's earlier proof-bound evaluator (approved-comparison-r1)
+while keeping all of its thresholds: ≤ 2 corrections, +10 points, 8 s median warm phone scan,
+correctness on each phone, and the 70% stop rule.
+**Where.** `tools/receipt-regression/corrections.ts` (tested in `corrections.test.ts`),
+`tools/receipt-regression/README.md`, `docs/reports/2026-11-engine-comparison.md`.

@@ -49,7 +49,27 @@ Without the switch, a build contains no Paddle files. See docs/DEPLOY.md, "Build
 
 ## Dev-only tool: `tools/receipt-regression/`
 
-Local harness for the owner's scored runs (`npm run receipts:dev`, `receipts:test`, `receipts:check`). It runs the rework parser and a read-only copy of parser-v2's parser (`baseline/parser-v2/`, commit a80f7e3) on the same text and applies the Batch 1b merge gate. The app never imports it; it refuses production builds. See its README.
+Local harness for the owner's scored runs (`npm run receipts:dev`, `receipts:test`, `receipts:check`). It refuses production builds, and the app's normal build never imports it (the only link is the dev page below, compiled out of production). See its README.
+
+| File | Responsibility | Kind |
+|---|---|---|
+| `model.ts` | Reference schema (`Expected`), `evaluate` (product matching, checks, silent errors), Batch 1b gate | pure |
+| `owner-reference.ts` | Owner reference format: pairing by REG id, contract check, conversion to `Expected` (known fields only) | pure |
+| `rework-parser.ts`, `parsers.ts` | The app's parser as a `ParserUnderTest`; `parsers.ts` adds the parser-v2 baseline copy | pure |
+| `corrections.ts` | Phase 2c: extra correction actions per receipt, from `evaluate`'s checks | pure |
+| `comparison.ts` | Phase 2c: result types, summary lines (IDs and counts only), reading pasted summaries and phone lines, the decision rule (a)–(d) and the 70% stop rule | pure |
+| `engine-runner.ts` | Phase 2c: scans each receipt with each engine (scan function injected), first + warm timings, scoring; held-out mode keeps IDs, counts and timings only | workflow |
+| `main.ts`, `index.html` | The harness page (DOM glue): sources, held-out mode, pickers with a multi-file fallback, summary and Combine | DOM |
+| `phone/EngineTimingPage.tsx` | Phone timing page UI (1 + 3 scans, median warm, optional reference) | React |
+| `vite.config.ts` | Dev server on 127.0.0.1:8081: serves the pinned Tesseract and Paddle files only, ORT WASM-only alias, browser console not forwarded to the terminal | config |
+| `smoke/*.mjs` | Headless Chrome smoke tests with synthetic receipts (Playwright supplied by the caller) | script |
+
+## Dev-only page: `/dev/engine-timing`
+
+`src/routes/dev.engine-timing.tsx` is a thin route; `src/lib/dev/dev-pages.ts` holds its guard
+(`DEV_PAGES_ENABLED`, the same compile-time condition as `ENGINE_SWITCH_ENABLED`, test-checked) and
+the only `import()` of `tools/receipt-regression/phone/EngineTimingPage.tsx`. In a production build
+the route answers "not found" and no page code is emitted.
 
 ## Contracts
 
