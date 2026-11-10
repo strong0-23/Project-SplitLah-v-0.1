@@ -27,7 +27,7 @@ UI code imports `@/lib/scan` (`index.ts`) only.
 | `paddle-engine.ts` | PaddleOCR behind `OcrEngine` (dev-only challenger), main-thread side: starts the worker, request/response messages, `terminate()` ends the worker. Maps Paddle segments to `OcrWord` (`paddleItemsToPage`). Reached only via `import()` from `engine-select.ts` | SDK adapter |
 | `paddle-runtime.ts` | Worker-side message handler: creates the SDK, loads models, runs `predict` with fixed settings; SDK and image decoding injected (fake SDK in tests) | SDK adapter |
 | `paddle.worker.ts` | Web Worker entry: dynamic-imports `@paddleocr/paddleocr-js`, decodes the Blob on an `OffscreenCanvas`, points ONNX Runtime at its self-built same-origin files | worker |
-| `paddle-assets.ts` | Pinned Paddle settings: SDK/runtime versions, self-hosted model paths with size + SHA-256, create options, predict settings, the provisional 120 s load limit | pure |
+| `paddle-assets.ts` | Pinned Paddle settings: SDK/runtime versions, model archives (`paddle-models/`, served at `/paddle/`) with size + SHA-256, create options, predict settings, the provisional 120 s load limit, and `engineSwitchForBuild` (switch refused on the production branch). Also imported by `vite.config.ts` | pure |
 | `tesseract-assets.ts` | Pinned self-hosted Tesseract files (`public/tesseract/`): versions, paths, size + SHA-256 manifest, same-origin URLs | pure |
 | `layout.ts` | Word boxes → reading-order rows; wide gaps kept as a two-space column mark | pure |
 | `numbers.ts` | Locale-aware amounts (1,234.56 / 1.234,56 / zero-decimal), negatives, OCR digit fixes, currency detection | pure |
@@ -39,6 +39,13 @@ UI code imports `@/lib/scan` (`index.ts`) only.
 | `index.ts` | Public API: `scanReceipt`, `parseReceiptText`, `parseReceiptLines`, `validateImageFile`, `preparePreview`, error types | — |
 
 Tests (synthetic text only): `receipt-types.test.ts` (one fixture per receipt style and per real-receipt pattern P1–P5; each must reconcile with `computeTotals`), `parser-v2-port.test.ts` (parser-v2's parser tests, adapted), `parser-v2-port-2a.test.ts` (the remaining parser-v2 parsing rules, Batch 2a), `tesseract-assets.test.ts` (self-hosted files match their manifest and the installed packages; the adapter uses same-origin paths only), `parse.test.ts`, `modules.test.ts`, `scan.test.ts` (workflow with a fake engine), `paddle-engine.test.ts` (Paddle adapter contract with a fake SDK and an in-process worker: word-box format, cancel, timeout, terminate; the dev switch; model archive hashes; exact package pins), `canvas.test.ts` (read-back probe with mocked canvases returning zeros, white, noise or throwing; preview and scan both stop), `ScanStep.test.tsx` (the message is shown and no preview). `src/test/setup.ts` marks the probe as passed before each test, because other tests mock canvases with fixed pixels; probe tests turn that off.
+
+## Build: `vite.config.ts` plugin `splitlah:paddle-models`
+
+Decides at build time whether the dev engine switch is compiled in (same condition as
+`engine-select.ts`; refused on the production branch via `engineSwitchForBuild`). Only then does it
+serve `paddle-models/*.tar` at `/paddle/` (dev server) or emit them into the client output (build).
+Without the switch, a build contains no Paddle files. See docs/DEPLOY.md, "Builds with Paddle on".
 
 ## Dev-only tool: `tools/receipt-regression/`
 

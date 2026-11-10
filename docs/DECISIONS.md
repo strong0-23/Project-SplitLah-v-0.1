@@ -103,12 +103,13 @@ runtime is 11.2 MB instead of 21.9 MB and works on every browser the app support
 **Where.** `package.json`, `vite.config.ts`, `paddle-assets.ts` (version constants, checked by a test).
 
 ### Paddle models self-hosted from the app's own origin
-**Rule.** The PP-OCRv5 mobile det/rec archives committed in `public/paddle/` (sizes and SHA-256 in
-`public/paddle/PROVENANCE.md` and `paddle-assets.ts`, checked by a test) are the only model source.
+**Rule.** The PP-OCRv5 mobile det/rec archives committed in `paddle-models/` (moved from
+`public/paddle/` on 11 Nov 2026, see below; sizes and SHA-256 in `paddle-models/PROVENANCE.md` and
+`paddle-assets.ts`, checked by a test) are the only model source.
 They are fetched from the page's own origin; there is no external model host and no CDN fallback.
 **Why.** Same reasons as Tesseract self-hosting: works when third-party hosts are blocked, no third
 party sees app usage, and the CSP needs no extra origins.
-**Where.** `paddle-assets.ts`, `public/paddle/`.
+**Where.** `paddle-assets.ts`, `paddle-models/`.
 
 ### Paddle runs in a Web Worker
 **Rule.** The SDK runs inside the app's own module worker (`paddle.worker.ts`), with the SDK's own
@@ -130,9 +131,37 @@ for Tesseract; 60 s is too short on slow mobile data.
 (`import.meta.env.DEV`), or in a build made with `VITE_SPLITLAH_ENGINE_SWITCH=on`. Both are build-time
 constants; in a normal production build the switch folds to "Tesseract", the URL is never read and
 no Paddle code, worker or runtime is emitted. `VITE_SPLITLAH_ENGINE_SWITCH` must never be set for
-the production deploy.
+the production deploy; since 11 Nov 2026 it is also refused on a Workers Builds build of `main`
+(see "Paddle files only in builds with the engine switch on").
 **Why.** The comparison needs both engines in one build; users must never get the challenger.
 **Where.** `engine-select.ts`, `ScanStep.tsx` (passes `engineFactoryFor()` to `scanReceipt`).
+
+### Paddle files only in builds with the engine switch on (owner, 11 Nov 2026)
+**Rule.** A normal build (`npm run build`, and every production deploy of `main`) contains no
+Paddle model archives and no Paddle/ONNX Runtime code or WASM. The archives live in
+`paddle-models/`, outside `public/`. The `splitlah:paddle-models` plugin in `vite.config.ts` serves
+them at `/paddle/` in `npm run dev`, and copies them into the client output only when the switch is
+compiled in (`import.meta.env.DEV`, or `VITE_SPLITLAH_ENGINE_SWITCH=on`). The Paddle code, worker
+and runtime were already left out of builds without the switch. On a Workers Builds build of the
+production branch (`WORKERS_CI_BRANCH` = `main`, `PRODUCTION_BRANCH` in `paddle-assets.ts`) the
+switch is refused even if the variable is set, and the build is identical to a normal one.
+**Why.** Production never loads Paddle, so shipping 21.5 MB of model files with it only adds deploy
+size. Cloudflare build variables apply to every branch, so the guard lets the owner turn Paddle on
+for preview builds (docs/DEPLOY.md) without any risk of it reaching production.
+**Where.** `vite.config.ts`, `paddle-assets.ts` (`engineSwitchForBuild`, tested), `paddle-models/`,
+`docs/DEPLOY.md` ("Builds with Paddle on").
+
+### Paddle packages pinned exactly (owner, 11 Nov 2026)
+**Rule.** `package.json` pins `@paddleocr/paddleocr-js` at exactly `0.4.2` and `onnxruntime-web` at
+exactly `1.22.0`, the version the SDK's own range (`^1.22.0`) resolves to in `bun.lock`. The SDK
+must use that single copy: a test fails if the pins and the installed versions differ, or if a
+nested `onnxruntime-web` appears under the SDK. Upgrading either is a deliberate change of both
+pins, `paddle-assets.ts` and the lockfile together.
+**Why.** The adapter builds ONNX Runtime's glue and WASM files from the installed package and the
+Vite alias points at it; if the SDK silently picked up another runtime version, the self-built
+files and the runtime JS could drift apart.
+**Where.** `package.json`, `bun.lock`, `paddle-assets.ts` (`PADDLE_SDK_VERSION`,
+`PADDLE_ORT_VERSION`), `paddle-engine.test.ts`.
 
 ### parser-v2 UI and storage features: none for the MVP
 **Rule.** None of parser-v2's UI/review features (B1–B6) or storage/schema/bill-maths features

@@ -4,6 +4,70 @@
 Paddle is wired in as a **dev-only** challenger engine behind `?engine=paddle`; Tesseract is still
 the only engine in production builds. Phase 2c (the comparison run) has **not** been started.
 
+## Update 2026-11-11: merged with `main`, Paddle files out of production builds
+
+This section supersedes the earlier text where they differ (notably §4's note that the model
+archives ship with every build, and §9 items 2, 3 and 7).
+
+**Merge.** `origin/main` (Batch D deploy, PR #3; canvas-blocked fix, PR #5) was merged into
+`engine-eval` as a merge commit (no rebase). Conflicts:
+- `ScanStep.tsx`: both imports kept (`CANVAS_BLOCKED_MESSAGE` and `engineFactoryFor`); the canvas
+  probe in `scan.ts` runs for either engine.
+- `AGENTS.md`, `docs/MODULES.md`: both sides' notes and rows kept.
+- `bun.lock`: regenerated, not hand-merged: main's lockfile + `bun install` (Bun 1.4.4) against the
+  merged `package.json`. The result has exactly the packages and versions engine-eval had, with
+  the 14 Lovable-mirror (`europe-west4-npm.pkg.dev`) URLs gone. All 615 package integrity hashes
+  were checked against `registry.npmjs.org` (615 match, 0 mismatches). A frozen install from an
+  empty cache in a fresh clone succeeds (see the PR).
+
+**Decision b: Paddle files only with the switch on** (DECISIONS.md, 11 Nov 2026).
+- The model archives moved from `public/paddle/` to `paddle-models/` (same bytes and hashes).
+- `vite.config.ts` plugin `splitlah:paddle-models` serves them at `/paddle/` in `npm run dev` and
+  copies them into the client output only when the switch is compiled in (same condition as
+  `engine-select.ts`). Paddle code, worker and ONNX Runtime were already absent without the switch.
+- Cloudflare build variables apply to every branch, so the switch is refused on the production
+  branch: `engineSwitchForBuild` (tested) returns "blocked" when `WORKERS_CI_BRANCH` is `main`, and
+  the plugin compiles `VITE_SPLITLAH_ENGINE_SWITCH` as "" for that build. Owner steps for preview
+  builds are in docs/DEPLOY.md, "Builds with Paddle on".
+
+| Build (`npm run build`, this branch) | Static (`.output/public`) | Files | Worker (`.output/server`) | Paddle files |
+|---|---:|---:|---:|---|
+| Production (no switch) | 11,610,781 B | 15 | 1,774,548 B (upload 1,732.59 KiB, gzip 386.95 KiB) | none |
+| Before this update (no switch) | 33,156,806 B | | 1,775,242 B | 2 model archives |
+| Switch on (`VITE_SPLITLAH_ENGINE_SWITCH=on`) | 66,257,249 B | | 1,782,987 B | archives 21,544,960 B + `paddle.worker` 10,526,306 + ORT `.wasm` 11,210,254 + `.mjs` 20,856 + SDK `worker-entry` 11,341,486 (never loaded) + adapter chunks |
+| Switch requested, `WORKERS_CI_BRANCH=main` | identical to production (`diff -r` of `.output/public`: no differences) | | | none |
+
+The only Paddle mention left in a production build is a source comment in the SSR routes chunk.
+
+**Smoke tests (11 Nov)**, synthetic receipt (invented text, 3 items, total 23.38) rendered onto a
+canvas in headless Chrome; Chrome ran with `--no-proxy-server` and
+`--host-resolver-rules=MAP * ~NOTFOUND` (localhost excepted); probe fetches to jsDelivr and Paddle's
+official model host failed. Served with `npx wrangler@4.154.0 dev --config cloudflare/wrangler.jsonc`
+(headers on, main's current CSP).
+
+| Build, URL | Engine files requested | Result | Scan time |
+|---|---|---|---:|
+| Switch on, `/?engine=paddle` | same-origin only: adapter, `paddle.worker`, both `/paddle/*.tar`, ORT `.mjs`/`.wasm` | 3 items, "Matches the receipt total exactly", split into 2 people and summary OK, 0 CSP violations | 9.5 s |
+| Switch on, `/` (Tesseract) | `/tesseract/…` only | same result, 0 CSP violations | 3.4 s |
+| Production, `/?engine=paddle` | `/tesseract/…` only (switch ignored); `/paddle/PP-OCRv5_mobile_det.tar` → 404 | same result | 3.3 s |
+| `npm run dev`, `/?engine=paddle` | models served by the plugin (SHA-256 matches) | same result | 10.4 s |
+
+The only external request the app made was its Google Fonts stylesheet (blocked by the test
+network; not engine-related). Not verified: a real Cloudflare preview build (needs the dashboard
+variable), phones, Safari, Firefox.
+
+**Decision c: pins.** `@paddleocr/paddleocr-js` `0.4.2` and `onnxruntime-web` `1.22.0`, exact.
+`bun.lock` has one `onnxruntime-web` entry, 1.22.0, which also satisfies the SDK's `^1.22.0`. The
+pin test now also fails if a nested copy appears under the SDK.
+
+**Decision d: load limit.** Paddle keeps 120 s, still PROVISIONAL until the Phase 2c phone timings.
+
+**CSP.** Not changed on this branch. Dropping jsDelivr and `blob:` is a separate PR
+(`security/csp-tighten`) that depends on this one.
+
+**Checks on the merged branch:** `tsc --noEmit`, `vitest run` (291 tests), `eslint src/lib/scan`,
+`vite build`, `receipts:test` (29 tests) and the Wrangler dry-run all pass.
+
 ## 1. Summary
 
 - **Owner decisions applied (11 Nov 2026)**, recorded in `docs/DECISIONS.md`: SDK added at exactly
@@ -359,19 +423,15 @@ A device downloads the worker, **one** core and the model: about **7.0 MB raw, �
 ## 9. For the owner
 
 1. **Phase 2c not started.** It needs your gate (verified reference drafts and explicit authorisation).
-2. **Paddle model archives deployed with production** (21.5 MB, never loaded there). They are in
-   `public/`, so every build ships them. *Option: move them out of `public/` and copy them in only
-   for switch-enabled builds. Small change; not done without your say.*
-3. **`onnxruntime-web@1.22.0` pinned directly** in `package.json`. It is the version the approved SDK
-   already brings in; pinning it keeps the self-built runtime files in step. *Please confirm.*
+2. ~~Paddle model archives deployed with production~~ **Done 11 Nov**: see the update above.
+3. ~~`onnxruntime-web@1.22.0` pinned directly~~ **Confirmed 11 Nov** (DECISIONS.md).
 4. **CSP follow-up on `main`** (§7): drop jsDelivr and `blob:`; consider dropping `'wasm-unsafe-eval'`
    after a preview check.
 5. **120 s Paddle load limit** stays provisional until the 2c phone timings.
 6. **Orientation probes** make Paddle ≈ 2.5× slower than Tesseract on desktop (§6). Whether to tune
    them for Paddle is a 2c question.
-7. **This branch is behind `main`** (Batch D, PR #3, merged after `engine-eval` was cut). Expect
-   overlaps in `package.json`/`bun.lock` when merging; `bun.lock` here still has 14 Lovable-mirror
-   URLs that `main` already replaced.
+7. ~~This branch is behind `main`~~ **Merged 11 Nov**; `bun.lock` regenerated from the public
+   registry.
 8. Offline service worker for the engine files: still deferred (unchanged recommendation).
 
 <details><summary>Approval list from the preparation stage (10 Nov), now decided</summary>
