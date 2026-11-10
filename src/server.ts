@@ -2,6 +2,7 @@ import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
+import { securityHeadersEnabled, withSecurityHeaders } from "./lib/security-headers";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -44,18 +45,37 @@ function isH3SwallowedErrorBody(body: string): boolean {
   }
 }
 
+/**
+ * The Cloudflare Worker env. nitro's cloudflare-module entry attaches it to the request
+ * (`request.runtime.cloudflare.env`) and to `globalThis.__env__` rather than passing it here.
+ * Elsewhere (Lovable, `vite dev`) there is none, and the security headers stay off.
+ */
+function workerEnv(request: Request, env: unknown): unknown {
+  if (env) return env;
+  const runtime = (request as Request & { runtime?: { cloudflare?: { env?: unknown } } }).runtime;
+  return runtime?.cloudflare?.env ?? (globalThis as { __env__?: unknown }).__env__;
+}
+
+async function handle(request: Request, env: unknown, ctx: unknown): Promise<Response> {
+  try {
+    const handler = await getServerEntry();
+    const response = await handler.fetch(request, env, ctx);
+    return await normalizeCatastrophicSsrResponse(response);
+  } catch (error) {
+    console.error(error);
+    return new Response(renderErrorPage(), {
+      status: 500,
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
+  }
+}
+
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
-    try {
-      const handler = await getServerEntry();
-      const response = await handler.fetch(request, env, ctx);
-      return await normalizeCatastrophicSsrResponse(response);
-    } catch (error) {
-      console.error(error);
-      return new Response(renderErrorPage(), {
-        status: 500,
-        headers: { "content-type": "text/html; charset=utf-8" },
-      });
-    }
+    const response = await handle(request, env, ctx);
+    // Batch D: security headers on the Cloudflare deploy only (see src/lib/security-headers.ts).
+    return securityHeadersEnabled(workerEnv(request, env))
+      ? withSecurityHeaders(response)
+      : response;
   },
 };

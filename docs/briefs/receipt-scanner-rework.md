@@ -14,7 +14,7 @@ This brief has two batches. **Do Batch 1 first.** Start Batch 2 only after the o
 Make receipt scanning work for as many receipt types as possible while keeping it lightweight and modular. Make no change to bill maths, storage schema or UI flow beyond what the scanner needs.
 
 ### Hard rules (apply to both batches)
-1. **Never push to `main` and never merge.** Push only the batch's work branch (`rework/receipt-scanner` for Batch 1, `engine-eval` for Batch 2), and open a PR for owner review. Never rewrite pushed history: no force-push, rebase, amend or squash of pushed commits.
+1. **Never push to `main` and never merge.** Push only the batch's work branch (`rework/receipt-scanner` for Batch 1, `deploy/cloudflare` for Batch D, `engine-eval` for Batch 2), and open a PR for owner review. Never rewrite pushed history: no force-push, rebase, amend or squash of pushed commits.
 2. **Recognition stays on the device.** Never upload images, and add no cloud OCR or vision API.
 3. **Tesseract stays the default engine.** In Batch 1, do no engine tuning and no PaddleOCR work. The engine interface only has to make a swap possible later.
 4. **Receipt data rules carry over from the evaluation brief.**
@@ -167,11 +167,44 @@ Phase 2a is moved forward into this batch for **parser rules only**.
 
    Update the PR description. **Do not merge.**
 
+### Merge (8 Nov 2026)
+The owner's scored run on revision `5f374d8` passed: `OVERALL: PASS` on REG001–004, with zero silent errors for the rework. PR #2 was merged into `main` as merge commit `a53bd58`.
+
+## Batch D: deploy from GitHub to Cloudflare (do before Batch 2)
+**Goal:** `main` deploys automatically to Cloudflare, and each PR gets a preview URL. Lovable stays live until the owner confirms the new URL works, then the owner disconnects it (step 3, owner only).
+**Branch:** `deploy/cloudflare`, cut from `main`. Open a PR; **do not merge**.
+
+1. **Investigate the current build.**
+   - The app uses `@lovable.dev/vite-tanstack-config`, which bundles TanStack Start with nitro (Cloudflare target), and has SSR in `src/server.ts`.
+   - Run `npm run build` and find what it outputs for Cloudflare: Worker entry, assets and any generated wrangler config.
+   - Keep the Lovable config package if the build depends on it. Replacing it is a separate decision for the owner.
+2. **Add a committed Wrangler config** (`wrangler.jsonc`) pointing at the build output.
+   - Use a pinned `compatibility_date` and the worker name `splitlah`.
+   - No paid features, bindings or secrets: the app needs none.
+   - `npx wrangler deploy --dry-run` must succeed locally.
+3. **Set up deploy via Cloudflare's GitHub integration (Workers Builds)**, not a GitHub Actions secret.
+   - Check Cloudflare's current docs.
+   - Write `docs/DEPLOY.md` with the exact dashboard steps for the owner: create a free account, Workers & Pages → import `strong0-23/Project-SplitLah-v-0.1`, set the build and deploy commands, set the production branch to `main`, and turn on preview builds for other branches.
+   - Claude Code can't click the dashboard; the owner does it once, following the doc.
+4. **Add security headers** suited to the scanner. Because of hard rule 2, CSP must still let the OCR run:
+   - CSP with `worker-src blob:` and `'wasm-unsafe-eval'`;
+   - `connect-src`/`script-src` allowing jsDelivr until Batch 2b self-hosts the models;
+   - `X-Content-Type-Options`, `Referrer-Policy`, `frame-ancestors 'none'`.
+
+   Verify a scan still works with the headers on: use `npx wrangler dev` locally with a synthetic receipt image.
+5. **Check:** `tsc`, `vitest`, `vite build`, the wrangler dry-run, and a local `wrangler dev` smoke test covering load, scan, review and split.
+6. **Report:** write `docs/reports/2026-11-cloudflare-deploy.md`, covering:
+   - what was changed;
+   - the headers and why each is set;
+   - what the owner must do in the dashboard;
+   - what was not verified, i.e. the live deploy until the owner connects the account.
+7. **Cost guard:** stay on the free plan. If anything would need a paid plan, stop and ask the owner.
+
 ## Batch 2: shared parser, then the engine decision
 
 **Purpose:** pick Tesseract or PaddleOCR on evidence. Both run on the device; no VLM or API calls. Both engines run on the same rework parser, so the comparison measures the engine alone.
 
-**Branch:** `engine-eval`, cut from `rework/receipt-scanner` after the owner merges PR #2 (Batch 1 + 1b). Same hard rules as Batch 1. Nothing is merged and the default engine is not changed without owner approval.
+**Branch:** `engine-eval`, cut from `main` (PR #2 is merged) after Batch D. Same hard rules as Batch 1. Nothing is merged and the default engine is not changed without owner approval.
 
 ### Phase 2a: remaining parser-v2 items (parser rules were done in Batch 1b)
 1. **Source:** branch `parser-v2` on GitHub, pushed on 7 Nov 2026 as one snapshot commit of the owner's local parser-v2 working copy.
