@@ -19,3 +19,4 @@
 - Scanning (src/lib/scan), persistence (src/lib/storage.ts) and state (src/hooks/use-bill.tsx) stay separate modules; only structured, schema-versioned data is persisted — never images.
 - Wizard step lives in the `?step=` search param so browser back/forward works while edits persist in shared state.
 - Tesseract.js is dynamically imported inside the Tesseract adapter's `load` (src/lib/scan/tesseract-engine.ts) so it never enters the SSR/initial bundle.
+- Tesseract's worker, core and `eng` model are self-hosted under `public/tesseract/<version>/` (pinned; manifest in src/lib/scan/tesseract-assets.ts). After upgrading tesseract.js, replace those files and the manifest; `tesseract-assets.test.ts` fails until they match.

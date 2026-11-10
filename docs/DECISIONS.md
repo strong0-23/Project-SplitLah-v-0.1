@@ -74,3 +74,18 @@ check every one of them rather than have it pass silently.
 ### D4 confirmed; rounding allocation deferred (owner, 7 Nov 2026)
 parser-v2's rounding-as-a-bill-adjustment, shared among participants, is not adopted for now.
 D4 stays: splitting uses the unrounded total, and the rounding is shown as a warning.
+
+## Receipt scanner, Batch 2b (approved by the owner, 6 Nov 2026)
+
+### Self-hosted Tesseract files
+**Rule.** Tesseract's worker (`worker.min.js`), its two LSTM cores (SIMD and non-SIMD) and the
+`eng` model (`4.0.0_best_int`) are served from the app's own static assets under
+`public/tesseract/`, at pinned versions (tesseract.js / tesseract.js-core 5.1.1,
+@tesseract.js-data/eng 1.0.0). There is no CDN fallback. Versioned paths, and a size + SHA-256
+manifest in `tesseract-assets.ts` checked by a test, keep the copies in step with the installed
+packages.
+**Why.** Scanning then works when jsDelivr is blocked or down, no third party sees when the app
+is used, and the CSP can drop jsDelivr. The brief approved self-hosting for both engines (Batch 2b
+step 5); Paddle's files wait for the decision on adding Paddle.
+**Where.** `tesseract-assets.ts`, `tesseract-engine.ts`, `public/tesseract/`.
+
