@@ -16,7 +16,13 @@ import { isConsistent, parseReceiptLines, scoreParse, type ParseResult } from ".
 import { runOcr, type OcrProgress, type ScanDeps } from "./scan";
 import type { CropFractions, OcrEngine, Rotation, ScanOptions } from "./types";
 
-export { ACCEPTED_TYPES, MAX_UPLOAD_BYTES, preparePreview, validateImageFile } from "./canvas";
+export {
+  ACCEPTED_TYPES,
+  CANVAS_BLOCKED_MESSAGE,
+  MAX_UPLOAD_BYTES,
+  preparePreview,
+  validateImageFile,
+} from "./canvas";
 export {
   FOLDED_FEES_NOTE,
   hasFoldedFees,

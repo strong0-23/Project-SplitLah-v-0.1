@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera, FileText, ImageUp, RotateCcw, RotateCw, Sparkles } from "lucide-react";
 import { useBill } from "@/hooks/use-bill";
-import { ACCEPTED_TYPES, MAX_UPLOAD_BYTES, OcrCancelled, preparePreview, scanReceipt, validateImageFile, type OcrProgress, type Rotation, type CropFractions } from "@/lib/scan";
+import { ACCEPTED_TYPES, CANVAS_BLOCKED_MESSAGE, MAX_UPLOAD_BYTES, OcrCancelled, preparePreview, scanReceipt, validateImageFile, type OcrProgress, type Rotation, type CropFractions } from "@/lib/scan";
 import { Button, Card, Notice } from "./ui";
 import { Shell } from "./Shell";
 
@@ -24,7 +24,7 @@ export function ScanStep({ go }: { go: (s: "review" | "split") => void }) {
     let live = true;
     preparePreview(file, { rotation, crop: manualCrop ? crop : null })
       .then((p) => { if (live) { setPreview(URL.createObjectURL(p.blob)); setPreviewRotation(p.rotation); } })
-      .catch((e) => { if (live) setError(e instanceof Error ? e.message : "Couldn't open this image."); });
+      .catch((e) => { if (live) { setPreview(null); setError(e instanceof Error ? e.message : "Couldn't open this image."); } });
     return () => { live = false; };
   }, [file, rotation, crop, manualCrop]);
   const [previewRotation, setPreviewRotation] = useState<Rotation>(0);
@@ -65,8 +65,11 @@ export function ScanStep({ go }: { go: (s: "review" | "split") => void }) {
       setPreview(null);
       go("review");
     } catch (e) {
-      if (!(e instanceof OcrCancelled) && !ctrl.signal.aborted)
-        setError(`${e instanceof Error ? e.message : "Scanning failed."} You can try another photo or enter the items manually.`);
+      if (!(e instanceof OcrCancelled) && !ctrl.signal.aborted) {
+        const msg = e instanceof Error ? e.message : "Scanning failed.";
+        // The blocked-canvas message already says what to do; another photo won't help there.
+        setError(msg === CANVAS_BLOCKED_MESSAGE ? msg : `${msg} You can try another photo or enter the items manually.`);
+      }
     } finally {
       if (abortRef.current === ctrl) abortRef.current = null;
       setProgress(null);
