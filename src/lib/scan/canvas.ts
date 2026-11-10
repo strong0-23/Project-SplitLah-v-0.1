@@ -27,6 +27,86 @@ export function validateImageFile(file: File): string | null {
   return null;
 }
 
+/**
+ * Shown when the browser blocks or randomises canvas read-back (privacy / anti-fingerprinting
+ * protection, e.g. Firefox `privacy.resistFingerprinting`, Zen, Tor Browser, Brave). Without
+ * read-back, every processed image comes out blank (a black preview) or noisy, so scanning can't work.
+ */
+export const CANVAS_BLOCKED_MESSAGE =
+  "Your browser is blocking image processing for this site (privacy/fingerprinting protection). Allow it for this site, or use another browser such as Edge or Chrome. You can still enter items manually.";
+
+/** Side of the read-back probe canvas, in pixels. Four solid quadrants of known colours. */
+export const PROBE_SIZE = 8;
+const PROBE_COLOURS: ReadonlyArray<readonly [number, number, number]> = [
+  [220, 20, 60],
+  [30, 144, 255],
+  [255, 215, 0],
+  [16, 16, 16],
+];
+
+/** The opaque colour the probe draws at (x, y). Pure. */
+export function probeColourAt(x: number, y: number): readonly [number, number, number] {
+  const half = PROBE_SIZE / 2;
+  return PROBE_COLOURS[(x >= half ? 1 : 0) + (y >= half ? 2 : 0)]!;
+}
+
+/**
+ * True when RGBA data read back from the probe is exactly what was drawn. Solid opaque sRGB colours
+ * round-trip exactly in every normal browser; blocked read-back returns zeros or a blank image, and
+ * randomised read-back changes some values. Pure; exported for tests.
+ */
+export function probeMatches(data: ArrayLike<number>): boolean {
+  if (data.length !== PROBE_SIZE * PROBE_SIZE * 4) return false;
+  for (let y = 0; y < PROBE_SIZE; y++) {
+    for (let x = 0; x < PROBE_SIZE; x++) {
+      const i = (y * PROBE_SIZE + x) * 4;
+      const [r, g, b] = probeColourAt(x, y);
+      if (data[i] !== r || data[i + 1] !== g || data[i + 2] !== b || data[i + 3] !== 255)
+        return false;
+    }
+  }
+  return true;
+}
+
+/** A passing check is remembered for the page session; a failing one is re-run next time (cheap),
+ *  so allowing the site in the browser's prompt takes effect without a reload. */
+let readbackOk = false;
+
+/** Draws the probe on a tiny canvas and reads it back. Returns false if read-back is blocked or altered. */
+export function canvasReadbackWorks(): boolean {
+  if (readbackOk) return true;
+  let ok: boolean;
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = PROBE_SIZE;
+    canvas.height = PROBE_SIZE;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    // No 2D canvas at all is a different failure; render() reports it with its own message.
+    if (!ctx) return true;
+    const half = PROBE_SIZE / 2;
+    for (let q = 0; q < 4; q++) {
+      const [r, g, b] = PROBE_COLOURS[q]!;
+      ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+      ctx.fillRect((q % 2) * half, Math.floor(q / 2) * half, half, half);
+    }
+    ok = probeMatches(ctx.getImageData(0, 0, PROBE_SIZE, PROBE_SIZE).data);
+  } catch {
+    ok = false; // some browsers throw (SecurityError) instead of returning blank data
+  }
+  readbackOk = ok;
+  return ok;
+}
+
+/** Throws the user-facing "browser is blocking image processing" error when read-back doesn't work. */
+export function assertCanvasReadable(): void {
+  if (!canvasReadbackWorks()) throw new OcrError("decode", CANVAS_BLOCKED_MESSAGE);
+}
+
+/** Tests only: `true` skips the probe (mocked canvases), `false` forces it to run again. */
+export function setCanvasReadbackCheckedForTests(passed: boolean): void {
+  readbackOk = passed;
+}
+
 /** Scale factor (≤ 1) that fits a w×h region inside the given budget. Pure; exported for tests. */
 export function fitScale(
   w: number,
@@ -127,6 +207,7 @@ export async function preparePreview(
   file: File,
   opts: ScanOptions,
 ): Promise<{ blob: Blob; rotation: Rotation; crop: CropFractions | null; autoRotation: boolean }> {
+  assertCanvasReadable(); // never show a blank (black) preview
   const b = await decodeImage(file);
   try {
     const rotation = opts.rotation ?? rotationCandidates(b)[0]!;

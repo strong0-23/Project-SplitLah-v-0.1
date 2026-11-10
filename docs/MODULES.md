@@ -21,7 +21,7 @@ UI code imports `@/lib/scan` (`index.ts`) only.
 |---|---|---|
 | `types.ts` | Contracts: `OcrEngine`, `OcrPage`/`OcrWord`/`BBox`, `LayoutHint`, `ScanOptions`, `OcrError`, `OcrCancelled` | pure |
 | `image.ts` | Lighting flattening, paper-bounds detection on raw pixel arrays | pure |
-| `canvas.ts` | Decode, rotate, crop, scale to a pixel budget (so long receipts stay legible), preview, file validation | DOM adapter |
+| `canvas.ts` | Decode, rotate, crop, scale to a pixel budget (so long receipts stay legible), preview, file validation. Canvas read-back probe (`assertCanvasReadable`): a tiny known pattern is drawn and read back; if a privacy/anti-fingerprinting setting blanks or randomises it, preview and scan stop with `CANVAS_BLOCKED_MESSAGE` (stage `decode`) instead of showing a black image. A pass is remembered for the page session; a failure is re-checked next time | DOM adapter |
 | `tesseract-engine.ts` | Tesseract.js behind `OcrEngine`; SDK is lazy-imported in `load` | SDK adapter |
 | `layout.ts` | Word boxes → reading-order rows; wide gaps kept as a two-space column mark | pure |
 | `numbers.ts` | Locale-aware amounts (1,234.56 / 1.234,56 / zero-decimal), negatives, OCR digit fixes, currency detection | pure |
@@ -32,7 +32,7 @@ UI code imports `@/lib/scan` (`index.ts`) only.
 | `scan.ts` | Workflow: decode → load engine → orient → crop/flatten → recognise → optional 2nd pass. Cancellable (`AbortSignal`), time-bounded, engine injected | workflow |
 | `index.ts` | Public API: `scanReceipt`, `parseReceiptText`, `parseReceiptLines`, `validateImageFile`, `preparePreview`, error types | — |
 
-Tests (synthetic text only): `receipt-types.test.ts` (one fixture per receipt style and per real-receipt pattern P1–P5; each must reconcile with `computeTotals`), `parser-v2-port.test.ts` (parser-v2's parser tests, adapted), `parse.test.ts`, `modules.test.ts`, `scan.test.ts` (workflow with a fake engine).
+Tests (synthetic text only): `receipt-types.test.ts` (one fixture per receipt style and per real-receipt pattern P1–P5; each must reconcile with `computeTotals`), `parser-v2-port.test.ts` (parser-v2's parser tests, adapted), `parse.test.ts`, `modules.test.ts`, `scan.test.ts` (workflow with a fake engine), `canvas.test.ts` (read-back probe with mocked canvases returning zeros, white, noise or throwing; preview and scan both stop), `ScanStep.test.tsx` (the message is shown and no preview). `src/test/setup.ts` marks the probe as passed before each test, because other tests mock canvases with fixed pixels; probe tests turn that off.
 
 ## Dev-only tool: `tools/receipt-regression/`
 
