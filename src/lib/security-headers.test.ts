@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   CONTENT_SECURITY_POLICY,
-  OCR_ASSET_ORIGIN,
   SECURITY_HEADERS,
   securityHeadersEnabled,
   withSecurityHeaders,
@@ -24,24 +23,31 @@ describe("security headers (Batch D)", () => {
       expect(securityHeadersEnabled(env)).toBe(false);
   });
 
-  it("let the on-device OCR run: blob: workers, WebAssembly and jsDelivr model files", () => {
-    expect(directive("worker-src")).toContain("blob:");
-    expect(directive("script-src")).toContain("'wasm-unsafe-eval'");
-    expect(directive("script-src")).toContain(OCR_ASSET_ORIGIN);
-    expect(directive("connect-src")).toContain(OCR_ASSET_ORIGIN);
+  it("let the self-hosted on-device OCR run: same-origin workers and files, WebAssembly", () => {
+    expect(directive("worker-src")).toBe("worker-src 'self'");
+    expect(directive("connect-src")).toBe("connect-src 'self'");
+    expect(directive("script-src")).toBe("script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'");
+    // Receipt previews are blob: URLs created in the browser.
     expect(directive("img-src")).toContain("blob:");
-    expect(directive("script-src")).not.toContain("'unsafe-eval'");
+  });
+
+  it("allow no CDN, no blob: workers and never 'unsafe-eval'", () => {
+    expect(CONTENT_SECURITY_POLICY).not.toContain("jsdelivr");
+    for (const name of ["script-src", "worker-src", "connect-src", "default-src"])
+      expect(directive(name)).not.toContain("blob:");
+    expect(CONTENT_SECURITY_POLICY).not.toContain("'unsafe-eval'");
+    // The only third-party origins left are Google Fonts (stylesheet and font files).
+    const thirdParty = CONTENT_SECURITY_POLICY.split(/[ ;]+/).filter((s) => s.startsWith("http"));
+    expect([...new Set(thirdParty)].sort()).toEqual([
+      "https://fonts.googleapis.com",
+      "https://fonts.gstatic.com",
+    ]);
   });
 
   it("deny framing and lock down everything else", () => {
     expect(directive("frame-ancestors")).toBe("frame-ancestors 'none'");
     expect(directive("default-src")).toBe("default-src 'self'");
     expect(directive("object-src")).toBe("object-src 'none'");
-    expect(
-      directive("connect-src")
-        .split(" ")
-        .filter((s) => s.startsWith("http")),
-    ).toEqual([OCR_ASSET_ORIGIN]);
     expect(SECURITY_HEADERS).toMatchObject({
       "X-Content-Type-Options": "nosniff",
       "Referrer-Policy": "same-origin",
