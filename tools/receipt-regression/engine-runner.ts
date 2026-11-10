@@ -8,10 +8,9 @@
  * error messages are reduced to their stage; `details` is never built; progress text names the
  * receipt ID, engine and scan number only.
  *
- * Warm time: a re-scan of the same image in the same page session after the engine has loaded once.
- * The app's pipeline starts and ends an engine for every scan (scan.ts), so a warm scan includes
- * starting the engine again from files the browser already has; it is what a user waits for on
- * their second scan.
+ * Warm time: a re-scan of the same image in the same page session with the engine already loaded.
+ * `scanReceipt` keeps the loaded engine between scans (engine-pool.ts), as the app does, so a warm
+ * scan is recognition only. The first scan of each engine in a run includes loading it (cold).
  */
 import type { Receipt } from "../../src/lib/types";
 import { countCorrections, countSilent } from "./corrections";

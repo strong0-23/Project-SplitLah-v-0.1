@@ -14,6 +14,7 @@ import {
   rotationCandidates,
   toBlob,
 } from "./canvas";
+import { singleUseLease, type EnginePool } from "./engine-pool";
 import { pageToLines } from "./layout";
 import { createTesseractEngine } from "./tesseract-engine";
 import {
@@ -53,6 +54,11 @@ export type LinesScorer = (lines: string[]) => { score: number; good: boolean };
 export interface ScanDeps {
   scorer: LinesScorer;
   createEngine?: () => OcrEngine;
+  /**
+   * Keeps a loaded engine between scans (engine-pool.ts). Without one, the engine is created,
+   * loaded and terminated for this scan only.
+   */
+  pool?: EnginePool;
 }
 
 /** Counts confident, horizontal real words. Sideways text yields few, tall boxes. Pure. */
@@ -76,7 +82,14 @@ export async function runOcr(
   let timedOut = false;
   const onAbort = () => ctrl.abort();
   if (signal.aborted) throw new OcrCancelled();
-  const engine = (deps.createEngine ?? createTesseractEngine)();
+  const factory = deps.createEngine ?? createTesseractEngine;
+  // The engine reports progress through this scan's `report` while the scan holds it.
+  const forward = (p: { status: string; progress: number }) => report(p.status, p.progress);
+  const lease = deps.pool
+    ? deps.pool.acquire(factory, forward)
+    : singleUseLease(factory(), forward);
+  const engine = lease.engine;
+  let succeeded = false;
   // An engine may ask for a longer load limit; the overall bound grows by the same amount, so the
   // recognition stages keep the time they had.
   const loadTimeoutMs = engine.loadTimeoutMs ?? LOAD_TIMEOUT_MS;
@@ -123,8 +136,9 @@ export async function runOcr(
       p.then(res, rej).finally(() => ctrl.signal.removeEventListener("abort", a));
     });
 
+  // Cancel or timeout: stop the engine at once (a running recognition ends) and mark it for reload.
   const killOnAbort = () => {
-    void engine.terminate();
+    void lease.discard();
   };
   ctrl.signal.addEventListener("abort", killOnAbort);
   let bitmap: ImageBitmap | null = null;
@@ -160,35 +174,37 @@ export async function runOcr(
 
     stage = "load";
     range = [0.05, 0.25];
-    report("Loading text recogniser", 0);
+    if (!lease.needsLoad) report("Text recogniser ready", 1);
+    else report("Loading text recogniser", 0);
     let loadTimer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await guard(
-        Promise.race([
-          engine.load((p) => report(p.status, p.progress)),
-          new Promise<never>((_, rej) => {
-            loadTimer = setTimeout(
-              () =>
-                rej(
-                  new OcrError(
-                    "load",
-                    "The text recogniser took too long to download. Check your connection and try again.",
+    if (lease.needsLoad)
+      try {
+        await guard(
+          Promise.race([
+            lease.load(),
+            new Promise<never>((_, rej) => {
+              loadTimer = setTimeout(
+                () =>
+                  rej(
+                    new OcrError(
+                      "load",
+                      "The text recogniser took too long to download. Check your connection and try again.",
+                    ),
                   ),
-                ),
-              loadTimeoutMs,
-            );
-          }),
-        ]),
-      );
-    } catch (e) {
-      if (e instanceof OcrCancelled || e instanceof OcrError) throw e;
-      throw new OcrError(
-        "load",
-        "Couldn't start the text recogniser. Check your connection and try again.",
-      );
-    } finally {
-      clearTimeout(loadTimer);
-    }
+                loadTimeoutMs,
+              );
+            }),
+          ]),
+        );
+      } catch (e) {
+        if (e instanceof OcrCancelled || e instanceof OcrError) throw e;
+        throw new OcrError(
+          "load",
+          "Couldn't start the text recogniser. Check your connection and try again.",
+        );
+      } finally {
+        clearTimeout(loadTimer);
+      }
     check();
 
     // Orientation: quick low-resolution probes, best guess first; stop as soon as one reads well.
@@ -252,13 +268,17 @@ export async function runOcr(
         "recognize",
         "No text was found. Rotate the photo so the text is upright, crop to the receipt, or retake it in better light.",
       );
+    succeeded = true;
     return { lines, text: page.text, rotation, crop, passes, engine: engine.name };
   } finally {
     clearTimeout(timer);
     signal.removeEventListener("abort", onAbort);
     ctrl.signal.removeEventListener("abort", killOnAbort);
-    ctrl.abort(); // also stops an engine that resolves after a load timeout or a failed stage
+    ctrl.abort(); // no stale progress from this scan after it ends
     bitmap?.close();
-    await engine.terminate();
+    // Success: keep the engine for the next scan (a pool keeps it; a single-use lease terminates
+    // it). Any failure (error, cancel, timeout, an engine that loads after its limit) discards it.
+    if (succeeded) await lease.release();
+    else await lease.discard();
   }
 }

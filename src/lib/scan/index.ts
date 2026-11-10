@@ -12,9 +12,12 @@
  *   reconcile.ts        pure: tax inclusive/exclusive, consistency score
  *   parse.ts            pure: lines → draft Receipt
  *   scan.ts             workflow: image → engine → rows, cancellable and time-bounded
+ *   engine-pool.ts      keeps a loaded engine between scans in a page session (idle timeout)
  */
+import { sharedEnginePool } from "./engine-pool";
 import { isConsistent, parseReceiptLines, scoreParse, type ParseResult } from "./parse";
 import { runOcr, type OcrProgress, type ScanDeps } from "./scan";
+import type { EnginePool } from "./engine-pool";
 import type { CropFractions, OcrEngine, Rotation, ScanOptions } from "./types";
 
 export {
@@ -35,6 +38,7 @@ export {
 } from "./parse";
 export { runOcr, LOAD_TIMEOUT_MS, SCAN_TIMEOUT_MS, type OcrProgress, type OcrResult } from "./scan";
 export { createTesseractEngine } from "./tesseract-engine";
+export { ENGINE_IDLE_MS, EnginePool, sharedEnginePool } from "./engine-pool";
 export { engineFactoryFor } from "./engine-select";
 export {
   OcrCancelled,
@@ -51,15 +55,20 @@ export interface ScanReceiptResult extends ParseResult {
   passes: number;
 }
 
-/** Full scan: photo → draft receipt. The photo stays on the device. */
+/**
+ * Full scan: photo → draft receipt. The photo stays on the device. The engine is kept loaded for the
+ * next scan in this page session (`sharedEnginePool`); pass another pool to control that.
+ */
 export async function scanReceipt(
   file: File,
   opts: ScanOptions,
   onProgress: (p: OcrProgress) => void,
   signal: AbortSignal,
   createEngine?: () => OcrEngine,
+  pool: EnginePool = sharedEnginePool(),
 ): Promise<ScanReceiptResult> {
   const deps: ScanDeps = {
+    pool,
     scorer: (lines) => {
       const { receipt } = parseReceiptLines(lines);
       return { score: scoreParse(receipt), good: isConsistent(receipt) };
