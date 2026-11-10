@@ -35,7 +35,8 @@ UI code imports `@/lib/scan` (`index.ts`) only.
 | `items.ts` | Item-row shapes: qty/unit/total columns, `2 @ 3.50 7.00`, `x2`, weighed goods. A bare number is a quantity only under a Qty heading or when unit × number = total (D7); a decimal/fractional number stays in the name, flagged. An amount after `@` is a unit price: alone, the line total is unknown (Batch 2a) | pure |
 | `reconcile.ts` | Tax inclusive vs exclusive from printed numbers; charge-vs-rate check (`checkChargeRates`, P5); parse consistency score; `isConsistent` reuses `computeTotals` | pure |
 | `parse.ts` | Section state machine (header → items → summary → footer): lines → draft `Receipt` + warnings | pure |
-| `scan.ts` | Workflow: decode → load engine → orient → crop/flatten → recognise → optional 2nd pass. Cancellable (`AbortSignal`), time-bounded, engine injected | workflow |
+| `scan.ts` | Workflow: decode → load engine → orient → crop/flatten → recognise → optional 2nd pass. Cancellable (`AbortSignal`), time-bounded, engine injected. With `deps.pool` the engine is leased from the pool (load skipped when already loaded; released on success, discarded on any failure); without one it is single-use | workflow |
+| `engine-pool.ts` | Keeps one loaded engine between scans in a page session: reuse for the same factory, dispose after 3 min idle, on `pagehide`, on engine change and on error/cancel/timeout; forwards engine progress to the scan using it; single-use engine for a concurrent scan. `sharedEnginePool()` is the page's pool | workflow |
 | `index.ts` | Public API: `scanReceipt`, `parseReceiptText`, `parseReceiptLines`, `validateImageFile`, `preparePreview`, error types | — |
 
 Tests (synthetic text only): `receipt-types.test.ts` (one fixture per receipt style and per real-receipt pattern P1–P5; each must reconcile with `computeTotals`), `parser-v2-port.test.ts` (parser-v2's parser tests, adapted), `parser-v2-port-2a.test.ts` (the remaining parser-v2 parsing rules, Batch 2a), `tesseract-assets.test.ts` (self-hosted files match their manifest and the installed packages; the adapter uses same-origin paths only), `parse.test.ts`, `modules.test.ts`, `scan.test.ts` (workflow with a fake engine), `paddle-engine.test.ts` (Paddle adapter contract with a fake SDK and an in-process worker: word-box format, cancel, timeout, terminate; the dev switch; model archive hashes; exact package pins), `canvas.test.ts` (read-back probe with mocked canvases returning zeros, white, noise or throwing; preview and scan both stop), `ScanStep.test.tsx` (the message is shown and no preview). `src/test/setup.ts` marks the probe as passed before each test, because other tests mock canvases with fixed pixels; probe tests turn that off.
@@ -85,7 +86,7 @@ interface OcrPage { text: string; words: OcrWord[] } // words may be empty
 interface OcrWord { text: string; confidence: number; bbox: BBox }
 type LayoutHint = "column" | "block" | "sparse";
 
-scanReceipt(file, opts: ScanOptions, onProgress, signal, createEngine?) → ScanReceiptResult
+scanReceipt(file, opts: ScanOptions, onProgress, signal, createEngine?, pool = sharedEnginePool()) → ScanReceiptResult
 parseReceiptLines(lines: string[]) → { receipt: Receipt; warnings: string[]; currency: string | null }
 ```
 

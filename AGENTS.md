@@ -14,6 +14,7 @@
 - Receipt scanning lives in the feature module `src/lib/scan/*`; UI imports `@/lib/scan` (its `index.ts`) only. See docs/MODULES.md for the module table and docs/DECISIONS.md for scanner decisions D1–D6.
   - Pure modules (no DOM, no SDK, unit-tested with synthetic text): `types.ts` (contracts), `image.ts`, `layout.ts`, `numbers.ts`, `lexicon.ts`, `items.ts`, `reconcile.ts`, `parse.ts`.
   - Adapters: `canvas.ts` (browser canvas) and `tesseract-engine.ts` (OCR SDK). `scan.ts` is the workflow (decode → load → orient → recognise → optional 2nd pass), cancellable and time-bounded, with the engine injected.
+  - Engine lifecycle: `scanReceipt` leases the engine from `engine-pool.ts`, which keeps it loaded between scans and disposes it after 3 min idle, on `pagehide`, on engine change and on any error/cancel/timeout. Engine factories passed to `scanReceipt` must be stable functions (the pool reuses by factory identity); adapters must allow repeated `recognize` calls after one `load`.
   - OCR engines sit behind the `OcrEngine` interface in `types.ts` (load / recognize / terminate, word boxes out). Tesseract is the default; another on-device engine is added as a new adapter with no parser change. Recognition stays on the device: never upload images or add a cloud OCR/vision API.
   - Receipt vocabulary (charge, tax, total, payment terms) goes in `lexicon.ts`, not the parser.
 - Scanning (src/lib/scan), persistence (src/lib/storage.ts) and state (src/hooks/use-bill.tsx) stay separate modules; only structured, schema-versioned data is persisted — never images.

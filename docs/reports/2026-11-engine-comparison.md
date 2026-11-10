@@ -42,13 +42,16 @@ engine settings, parser rules or thresholds were tuned for this comparison.
 
 ### Timing
 
+- **Engine lifecycle (fixed 11 Nov 2026, before any comparison run):** the app now keeps a loaded
+  engine between scans in a page session, for both engines alike (`src/lib/scan/engine-pool.ts`).
+  It is disposed after 3 minutes idle, on page hide/unload, when the engine choice changes, and on
+  any error. Cancel still stops a running recognition at once and marks the engine for reload.
+  Orientation probes and the 60 s / 120 s load limits are unchanged.
 - **First scan:** the first scan of an image in a run. The first scan of each engine in a page
-  session is the **cold** scan (files downloaded and compiled; a fresh private window for a true
-  first download).
-- **Warm scan:** a re-scan of the same image in the same page session after the engine has loaded
-  once. 3 warm scans; their **median** is used. The app's pipeline starts and ends the engine on
-  every scan, so a warm scan includes restarting the engine from files already in the browser:
-  what a user waits for on a second scan.
+  session is the **cold** scan: it loads the engine (files downloaded and compiled; a fresh private
+  window for a true first download). Later first scans run on the loaded engine.
+- **Warm scan:** a second scan of the same image with the engine already loaded. 3 warm scans;
+  their **median** is used.
 - A failed or timed-out warm scan counts as the slowest value in a median.
 
 ## 3. Definitions
@@ -199,7 +202,7 @@ phones.
 | Check | Result |
 |---|---|
 | `npx tsc --noEmit`, `npm run receipts:check` | pass |
-| `npx vitest run` (app, 15 files) | 300 passed |
+| `npx vitest run` (app, 16 files) | 311 passed, including engine reuse: reuse, idle disposal, cancel-then-rescan, engine change, errors, load limit, page hide, concurrent scans, and Paddle's adapter reused across scans |
 | `npm run receipts:test` (harness, 5 files) | 68 passed: corrections, gates (pending and missing-runtime handling, 10-point and 70% edges at n = 12), summary parsing and sanitising, held-out console and summary checks, runner |
 | `npx eslint src/lib/scan tools/receipt-regression` | clean |
 | `npx vite build` (production) | pass; `/dev/engine-timing` → 404 under `wrangler dev`; no page code and no Paddle files in the output |
@@ -207,11 +210,18 @@ phones.
 | Harness smoke, headless Chrome 153 (`smoke/engine-smoke.mjs`) | pass: Both mode on 2 computer-rendered synthetic receipts, held-out (3 warm scans) and development runs, plus the Batch 1b parser gate; only the harness origin was reachable; no product name or amount in the summary, held-out page or console |
 | Phone page smoke, switch-on build under `wrangler dev` with the deploy CSP, emulated Pixel 7 (`smoke/phone-page-smoke.mjs`) | pass for both engines; no receipt content on the page or console |
 
-Observations on the synthetic receipts (desktop, not evidence for the decision):
+Timings on the synthetic receipts (desktop Linux, headless Chrome 153; not evidence for the
+decision), before and after the engine-reuse fix:
 
-- Tesseract's warm median was about 2.4 s.
-- Paddle's warm median was about 8.0 s on this desktop; phones are usually slower, so rule (c) is a
-  real risk.
+| Measurement | Tesseract before | Tesseract after | Paddle before | Paddle after |
+|---|---:|---:|---:|---:|
+| Harness, session-cold first scan | 2.7–2.8 s | 2.7 s | 9.2–9.4 s | 9.4 s |
+| Harness, warm median (2 receipts × 3) | 2.4–2.5 s | 2.0 s | 8.0–8.3 s | 6.0 s |
+| Phone page (`wrangler dev`, deploy CSP, emulated Pixel 7), cold | 2.8 s | 2.7 s | 9.0 s | 8.7 s |
+| Phone page, median of 3 warm | 2.5 s | 2.1 s | 8.2 s | 6.5 s |
+
+- Most of Paddle's remaining warm time is the orientation probes plus recognition (unchanged by
+  design). Phones are usually slower than this desktop, so rule (c) is still a real risk.
 - Paddle misread one synthetic product name, giving 1 missing product and 1 extra row (2 actions,
   2 silent errors). This shows the scoring working; it is not a result.
 
@@ -226,16 +236,12 @@ Observations on the synthetic receipts (desktop, not evidence for the decision):
 - **No real Cloudflare preview build** was tested; it was checked with `wrangler dev` locally.
 - **Sample size:** 12 held-out receipts give low statistical confidence; one receipt is about 8
   points.
-- **Warm time** includes restarting the engine (the app's behaviour), not a scan with the engine
-  kept loaded.
 - The engines' own runtime warnings (ONNX Runtime) still appear in the browser's DevTools console;
   they contain no receipt content.
 
 ## 9. For the owner
 
-1. Confirm, or change, how the tool applies rules (c), (d) and the stop rule (section 4): pooled
-   warm times per phone, receipts within 2 per phone over the same receipts, and 70% required in
-   both Edge and Firefox.
-2. Decide which phones and how many receipts per phone (suggestion: at least 4 held-out receipts per
-   phone, all 12 if time allows).
+1. **Settled (11 Nov 2026):** the rule application in section 4 is accepted; at least 4 receipts
+   per phone; engine reuse fixed before any run (section 2).
+2. Name the phones to test.
 3. Authorise the held-out run once the development references are verified (brief gate).

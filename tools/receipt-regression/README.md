@@ -24,10 +24,11 @@ It has three sources:
   `paddle-models/`); ONNX Runtime's WASM and the Paddle worker come from `node_modules` and
   `src/lib/scan` like any other module. No CDN.
 - Each receipt is scanned once (**first scan**), then re-scanned **3 times** in the same page
-  session (**warm**); the warm time is the median of the 3. The app's pipeline starts and ends the
-  engine on every scan, so a warm scan includes restarting the engine from files the browser
-  already has: what a user waits for on their second scan. The very first scan of each engine in
-  the page is the session's **cold** scan (for a first download, use a fresh private window).
+  session (**warm**: the engine is already loaded); the warm time is the median of the 3. Like the
+  app, `scanReceipt` keeps the loaded engine between scans (`src/lib/scan/engine-pool.ts`), so the
+  very first scan of each engine in the page is the session's **cold** scan (it includes loading
+  the engine; for a first download, use a fresh private window) and later scans are recognition
+  only. Switching engine disposes the other one.
 - Scoring uses the receipt the app itself would show, with **no saved preferences** (first use is
   the primary condition; `scanReceipt` never reads saved preferences).
 - Per receipt and engine it records matched, missing and extra products, quantity and amount

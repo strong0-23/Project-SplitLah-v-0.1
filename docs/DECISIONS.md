@@ -203,3 +203,28 @@ while keeping all of its thresholds: ≤ 2 corrections, +10 points, 8 s median w
 correctness on each phone, and the 70% stop rule.
 **Where.** `tools/receipt-regression/corrections.ts` (tested in `corrections.test.ts`),
 `tools/receipt-regression/README.md`, `docs/reports/2026-11-engine-comparison.md`.
+
+### How the decision rule is applied (accepted 11 Nov 2026)
+**Rule.** Rule (c): each phone's Paddle warm times are pooled and their median must be ≤ 8 s.
+Rule (d): per phone, Paddle's number of receipts within 2 corrections must be at least
+Tesseract's, over the same receipts scanned with both engines and a verified reference. Stop rule:
+an engine reaches 70% only if it does so in both Edge and Firefox. Each phone is tested on at least
+4 receipts; the owner names the phones.
+**Why.** These make the rules checkable from IDs-and-counts data without any receipt content, and
+never let missing data count as a pass.
+**Where.** `tools/receipt-regression/comparison.ts` (`verdict`, tested in `comparison.test.ts`).
+
+### Keep a loaded OCR engine between scans (11 Nov 2026)
+**Rule.** In a page session, a loaded engine (worker and models) is kept for the next scan, for
+both engines alike. It is disposed after 3 minutes idle (`ENGINE_IDLE_MS`), on page hide/unload
+(`pagehide`), when another engine is chosen, and on any scan error, cancel or timeout. Cancel still
+stops a running recognition at once (the engine is terminated and the next scan loads a new one).
+A concurrent second scan gets its own single-use engine. Orientation probes and the 60 s / 120 s
+load limits are unchanged. `runOcr` without a pool keeps the old one-shot behaviour; `scanReceipt`
+uses the page's shared pool.
+**Why.** Restarting the engine on every scan was an app inefficiency, not a measurement choice:
+a user's second scan waited for the engine to start again. Fixing it before the comparison means
+"warm" measures what users get, and it applies equally to both engines, so it is not tuning against
+data.
+**Where.** `src/lib/scan/engine-pool.ts`, `scan.ts` (`ScanDeps.pool`), `index.ts` (`scanReceipt`),
+`engine-reuse.test.ts`, `paddle-engine.test.ts`.
