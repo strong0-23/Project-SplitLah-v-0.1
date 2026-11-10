@@ -1,8 +1,10 @@
 /**
  * PaddleOCR (dev-only challenger engine, Batch 2b) settings and self-hosted model files. Pure data.
  *
- * Models: the owner's pinned PP-OCRv5 mobile archives in `public/paddle/` (see its PROVENANCE.md),
- * fetched from the app's own origin only. The ONNX Runtime glue module and WASM file are emitted by
+ * Models: the owner's pinned PP-OCRv5 mobile archives in `paddle-models/` (see its PROVENANCE.md),
+ * fetched from the app's own origin only. They are kept out of `public/`, so a normal production
+ * build does not ship them; the `splitlah:paddle-models` plugin in `vite.config.ts` serves them in
+ * `npm run dev` and copies them to `/paddle/` only in builds with the engine switch compiled in. The ONNX Runtime glue module and WASM file are emitted by
  * Vite from the installed `onnxruntime-web` (exact pin) when the Paddle worker is built, so they
  * always match the runtime JS. Settings are the sandbox's fixed "Paddle960" configuration.
  */
@@ -13,22 +15,45 @@ export const PADDLE_ORT_VERSION = "1.22.0";
 /** Paddle's own load limit (owner decision, 11 Nov 2026). PROVISIONAL until the 2c phone timings. */
 export const PADDLE_LOAD_TIMEOUT_MS = 120_000;
 
-/** Site-root paths of the self-hosted model archives (served from `public/`). */
+/** Cloudflare Workers Builds production branch (docs/DEPLOY.md). Builds of it never get the switch. */
+export const PRODUCTION_BRANCH = "main";
+
+/**
+ * Whether a non-dev build compiles the engine switch in. `requested` is VITE_SPLITLAH_ENGINE_SWITCH;
+ * `ciBranch` is WORKERS_CI_BRANCH, which Workers Builds sets on every build. Cloudflare build
+ * variables apply to every branch, so a request on the production branch is refused ("blocked"):
+ * production never ships Paddle, even if the variable is left set in the dashboard.
+ */
+export function engineSwitchForBuild(
+  requested: string | undefined,
+  ciBranch: string | undefined,
+): "on" | "off" | "blocked" {
+  if (requested !== "on") return "off";
+  return ciBranch === PRODUCTION_BRANCH ? "blocked" : "on";
+}
+
+/** Repository folder holding the model archives (outside `public/`). */
+export const PADDLE_MODEL_SOURCE_DIR = "paddle-models";
+
+/** Site-root folder the archives are served from when the engine switch is compiled in. */
+export const PADDLE_MODEL_URL_DIR = "/paddle/";
+
+/** Site-root paths of the self-hosted model archives. */
 export const PADDLE_MODEL_PATHS = {
-  det: "/paddle/PP-OCRv5_mobile_det.tar",
-  rec: "/paddle/PP-OCRv5_mobile_rec.tar",
+  det: `${PADDLE_MODEL_URL_DIR}PP-OCRv5_mobile_det.tar`,
+  rec: `${PADDLE_MODEL_URL_DIR}PP-OCRv5_mobile_rec.tar`,
 } as const;
 
-/** Pinned size and SHA-256 of each model archive (paths relative to `public/`). */
-export const PADDLE_MODEL_MANIFEST: ReadonlyArray<{ path: string; bytes: number; sha256: string }> =
+/** Pinned size and SHA-256 of each model archive (`file` is its name in `paddle-models/`). */
+export const PADDLE_MODEL_MANIFEST: ReadonlyArray<{ file: string; bytes: number; sha256: string }> =
   [
     {
-      path: "paddle/PP-OCRv5_mobile_det.tar",
+      file: "PP-OCRv5_mobile_det.tar",
       bytes: 4843520,
       sha256: "781056046c9ed77a15c94681605db6a0f62317c2e9cce6931c71da2478d4bc30",
     },
     {
-      path: "paddle/PP-OCRv5_mobile_rec.tar",
+      file: "PP-OCRv5_mobile_rec.tar",
       bytes: 16701440,
       sha256: "f7e792bc836f36e7ef895ad47c426d75b0b75b1650caa6d63fe9418441ffba8c",
     },

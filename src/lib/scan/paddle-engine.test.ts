@@ -10,9 +10,12 @@ import {
   PADDLE_LOAD_TIMEOUT_MS,
   PADDLE_MODEL_MANIFEST,
   PADDLE_MODEL_PATHS,
+  PADDLE_MODEL_SOURCE_DIR,
+  PADDLE_MODEL_URL_DIR,
   PADDLE_ORT_VERSION,
   PADDLE_PREDICT_SETTINGS,
   PADDLE_SDK_VERSION,
+  engineSwitchForBuild,
 } from "./paddle-assets";
 import { createPaddleEngine, paddleItemsToPage, type WorkerLike } from "./paddle-engine";
 import {
@@ -395,18 +398,41 @@ describe("dev-only engine switch", () => {
   });
 });
 
+describe("engine switch at build time", () => {
+  it("is on only when requested, and never on the production branch", () => {
+    expect(engineSwitchForBuild(undefined, undefined)).toBe("off");
+    expect(engineSwitchForBuild("", "engine-eval")).toBe("off");
+    expect(engineSwitchForBuild("true", "engine-eval")).toBe("off");
+    expect(engineSwitchForBuild("on", undefined)).toBe("on"); // local build
+    expect(engineSwitchForBuild("on", "engine-eval")).toBe("on"); // Cloudflare preview build
+    expect(engineSwitchForBuild("on", "main")).toBe("blocked"); // Cloudflare production build
+  });
+});
+
 describe("self-hosted Paddle model archives", () => {
-  it.each(PADDLE_MODEL_MANIFEST.map((a) => [a.path, a] as const))(
+  it.each(PADDLE_MODEL_MANIFEST.map((a) => [a.file, a] as const))(
     "%s is present with its pinned size and SHA-256",
     async (_, asset) => {
       const { createHash } = await import("node:crypto");
       const { readFileSync } = await import("node:fs");
       const path = await import("node:path");
-      const bytes = readFileSync(path.resolve(__dirname, "../../../public", asset.path));
+      const root = path.resolve(__dirname, "../../..");
+      const bytes = readFileSync(path.join(root, PADDLE_MODEL_SOURCE_DIR, asset.file));
       expect(bytes.length).toBe(asset.bytes);
       expect(createHash("sha256").update(bytes).digest("hex")).toBe(asset.sha256);
     },
   );
+
+  it("are served from /paddle/ under their manifest names, and are not in public/", async () => {
+    const { existsSync } = await import("node:fs");
+    const path = await import("node:path");
+    const root = path.resolve(__dirname, "../../..");
+    expect(Object.values(PADDLE_MODEL_PATHS).sort()).toEqual(
+      PADDLE_MODEL_MANIFEST.map((a) => `${PADDLE_MODEL_URL_DIR}${a.file}`).sort(),
+    );
+    // public/ is copied into every build; the archives must only ship with the switch on.
+    expect(existsSync(path.join(root, "public", "paddle"))).toBe(false);
+  });
 });
 
 describe("pinned Paddle packages", () => {
@@ -422,5 +448,12 @@ describe("pinned Paddle packages", () => {
       PADDLE_SDK_VERSION,
     );
     expect(read("node_modules/onnxruntime-web/package.json").version).toBe(PADDLE_ORT_VERSION);
+    // The SDK must use that same copy, not a nested one at another version.
+    const { existsSync } = await import("node:fs");
+    expect(
+      existsSync(
+        path.join(root, "node_modules/@paddleocr/paddleocr-js/node_modules/onnxruntime-web"),
+      ),
+    ).toBe(false);
   });
 });
