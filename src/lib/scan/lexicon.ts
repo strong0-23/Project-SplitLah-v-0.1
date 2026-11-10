@@ -69,7 +69,7 @@ const R: Array<[LineKind, RegExp]> = [
   ],
   [
     "discount",
-    /^(?:disc(?:ount)?|less\b|promo(?:tion)?|voucher|member\s*disc|coupon|rebate|markdown|diskaun|potongan|diskon|rabatt|remise|descuento|sconto|korting)/i,
+    /^(?:disc(?:ount)?|less\b|promo(?:tion)?|voucher|member\s*disc(?:ount)?|coupon|rebate|markdown|diskaun|potongan|diskon|rabatt|remise|descuento|sconto|korting)/i,
   ],
   [
     "rounding",
@@ -169,10 +169,17 @@ function totalCore(label: string): string {
     .trim();
 }
 
+/**
+ * A discount, voucher or coupon code after a separator ("Discount: ABC-1", "Voucher #A12"). Only a
+ * code containing a digit, so "PROMO: SET A" (a product) is never read as a discount (parser-v2).
+ */
+const DISCOUNT_CODE = /\s*[:#-]\s*(?=[\w-]*\d)[\w-]+$/;
+
 function classifyExact(label: string): LineKind | null {
   for (const [kind, re] of R) {
-    if (!re.test(label)) continue;
-    if (TAIL_CHECKED.has(kind) && !tailIsChargeWords(label, re)) continue;
+    const subject = kind === "discount" ? label.replace(DISCOUNT_CODE, "") : label;
+    if (!re.test(subject)) continue;
+    if (TAIL_CHECKED.has(kind) && !tailIsChargeWords(subject, re)) continue;
     return kind;
   }
   return null;
@@ -280,4 +287,17 @@ export function isFinancialNote(label: string): boolean {
   const numericSummary =
     /^(?:total\s*)?(?:gst|vat|tax)\s+(?:amt|amount|rate)\b/i.test(words) && /\d/.test(label);
   return taxContext && (monetaryCue || numericSummary);
+}
+
+/**
+ * Unit prices and line amounts printed on different tax bases: "Unit (incl GST) … Amount (excl GST)",
+ * or "Unit prices exclude GST" with "Line amount includes GST" (parser-v2). A quantity worked out
+ * from such a unit price and line amount would be wrong.
+ */
+export function mixedTaxBasis(lines: readonly string[]): boolean {
+  const has = (re: RegExp) => lines.some((l) => re.test(l));
+  return (
+    (has(/\bunit\b.*\bexcl/i) && has(/\b(?:amount|total)\b.*\bincl/i)) ||
+    (has(/\bunit\b.*\bincl/i) && has(/\b(?:amount|total)\b.*\bexcl/i))
+  );
 }

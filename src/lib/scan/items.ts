@@ -4,18 +4,24 @@
  * Supported row shapes (any spacing, any of the number formats in ./numbers):
  *   COFFEE                     7.00      price only (quantity 1, as printed)
  *   2 x COFFEE / 2X COFFEE     7.00      explicit leading quantity
- *   COFFEE x2 / COFFEE 2 @     7.00      explicit trailing quantity
+ *   COFFEE x2                  7.00      explicit trailing quantity
+ *   COFFEE 2 @ 3.50            7.00      explicit quantity and unit price, then the line total
+ *   COFFEE 2 @ 3.50                      unit price only: the line total is unknown (flagged)
  *   COFFEE 2                   7.00      bare trailing number: a quantity ONLY under a Qty heading
  *   COFFEE   2   3.50          7.00      qty | unit | total columns
  *   COFFEE   3.50   2          7.00      unit | qty | total columns
  *   2 @ 3.50                   7.00      detail row under a name row (supermarkets)
  *   BANANA 0.512kg @ 3.98/kg   2.04      weighed goods (quantity stays 1)
  * The line total (last amount) is always what is billed; unit prices only confirm the quantity.
+ * An amount printed straight after "@" is a unit price, never the line total: with no second
+ * amount the line total stays unknown and the row is flagged (parser-v2 rule, Batch 2a).
  *
  * A bare number next to a name ("VITAMIN B 12", "100 PLUS", "SOAP 2") is part of the product's
  * name unless a Qty column heading says otherwise, or the row's own unit price × that number
  * equals the line total. Otherwise it stays in the description and the row is flagged
- * (parser-v2 rule, owner decision 7 Nov 2026).
+ * (parser-v2 rule, owner decision 7 Nov 2026). A decimal or fractional number next to a name
+ * ("VERSION 2.5", "LOOSE TEA 1/2", "0.5 x LOOSE TEA") also stays in the name and flags the row:
+ * fractional quantities can't be stored, so the user checks it (parser-v2 rule, Batch 2a).
  */
 import { ITEM_TAX_MARKER, WEIGHT } from "./lexicon";
 import type { Amount } from "./numbers";
@@ -30,7 +36,10 @@ export const NO_QTY_COLUMNS: QtyColumns = { leading: false, trailing: false };
 export interface ItemRow {
   desc: string;
   quantity: number;
-  lineTotalCents: number;
+  /** null when the row prints only a unit price ("COFFEE 2 @ 3.50"). */
+  lineTotalCents: number | null;
+  /** The unit price printed after "@" when no line total follows it; otherwise null. */
+  unitPriceOnlyCents: number | null;
   /** Unsure about the description, quantity or price. */
   uncertain: boolean;
   taxMarked: boolean;
@@ -53,6 +62,10 @@ export interface ItemSplit {
 const MAX_QTY = 99;
 /** A trailing number introduced by No/Model/ID/Code/SKU is an identifier, never a quantity. */
 const IDENTIFIER = /\b(?:no\.?|model|id|code|sku)\s*\d+\s*$/i;
+/** A decimal or fractional number at either end of a name: "VERSION 2.5", "1/2 CHICKEN". */
+const FRACTIONAL_EDGE = /^\d{1,3}(?:[.,]\d{1,3}|\/\d{1,3})\s|\s\d{1,3}(?:[.,]\d{1,3}|\/\d{1,3})$/;
+/** Text just before an amount that makes it a unit price: "@", "@ $", "@ S$". */
+const AT_UNIT = /@\s*(?:S?\$|RM|Rp)?\s*$/i;
 
 /** Separates description, item tax marker and an explicit or column-backed quantity. */
 export function splitItemLabel(label: string, cols: QtyColumns = NO_QTY_COLUMNS): ItemSplit {
@@ -110,6 +123,8 @@ export function splitItemLabel(label: string, cols: QtyColumns = NO_QTY_COLUMNS)
       } else qtyUncertain = true;
     } else if (bareLead && !weighed) {
       bareNumber = { value: Number(bareLead[1]), descWithout: bareLead[2] ?? desc };
+    } else if (!weighed && !IDENTIFIER.test(desc) && FRACTIONAL_EDGE.test(desc)) {
+      qtyUncertain = true; // could be a fractional quantity: kept in the name, flagged
     }
   }
   if (quantity < 1 || quantity > MAX_QTY) {
@@ -153,6 +168,23 @@ export function readItemRow(
   let { quantity, qtyObserved, desc } = s;
   let uncertain = s.qtyUncertain;
 
+  // "COFFEE 2 @ 3.50" / "2 @ 8.95" / "BANANA 0.5kg @ 3.98/kg": the only amount is a unit price.
+  // Never copy it into the line total, and never multiply to fill one in (parser-v2).
+  const before = line.slice(amounts.length > 1 ? amounts[amounts.length - 2]!.end : 0, total.start);
+  if (amounts.length === 1 && AT_UNIT.test(before)) {
+    return {
+      desc: desc.slice(0, 80),
+      quantity,
+      lineTotalCents: null,
+      unitPriceOnlyCents: total.cents,
+      uncertain: true,
+      taxMarked: s.taxMarked,
+      qtyObserved,
+    };
+  }
+  // "COFFEE 2 x 3.50": the lone amount may be a unit price or the line total. Kept, flagged.
+  if (amounts.length === 1 && /\d\s*[x×*]\s*$/i.test(before)) uncertain = true;
+
   if (amounts.length >= 2 && !s.weighed) {
     const unit = amounts[amounts.length - 2]!.cents;
     const between = line.slice(amounts[amounts.length - 2]!.end, total.start).trim();
@@ -189,6 +221,7 @@ export function readItemRow(
     desc: desc.slice(0, 80),
     quantity,
     lineTotalCents: total.cents,
+    unitPriceOnlyCents: null,
     uncertain,
     taxMarked: s.taxMarked,
     qtyObserved,
