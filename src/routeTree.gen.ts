@@ -10,33 +10,43 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as DevEngineTimingRouteImport } from './routes/dev.engine-timing'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DevEngineTimingRoute = DevEngineTimingRouteImport.update({
+  id: '/dev/engine-timing',
+  path: '/dev/engine-timing',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/dev/engine-timing': typeof DevEngineTimingRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/dev/engine-timing': typeof DevEngineTimingRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/dev/engine-timing': typeof DevEngineTimingRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths: '/' | '/dev/engine-timing'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/' | '/dev/engine-timing'
+  id: '__root__' | '/' | '/dev/engine-timing'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  DevEngineTimingRoute: typeof DevEngineTimingRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +58,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/dev/engine-timing': {
+      id: '/dev/engine-timing'
+      path: '/dev/engine-timing'
+      fullPath: '/dev/engine-timing'
+      preLoaderRoute: typeof DevEngineTimingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  DevEngineTimingRoute: DevEngineTimingRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
