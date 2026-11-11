@@ -25,6 +25,7 @@ import {
   type PaddleItem,
   type ToPaddleWorker,
 } from "./paddle-runtime";
+import { EnginePool } from "./engine-pool";
 import { LOAD_TIMEOUT_MS, runOcr, SCAN_TIMEOUT_MS } from "./scan";
 import { OcrCancelled, OcrError } from "./types";
 
@@ -279,6 +280,45 @@ describe("Paddle engine in the shared scan workflow: cancel and timeout", () => 
     );
     expect(res.engine).toBe("paddle");
     expect(res.lines).toEqual(["EXAMPLE CAFE", "Fried Rice  8.50"]);
+  });
+
+  it("keeps one worker and its models across scans in a pool; cancel ends it, the next scan reloads", async () => {
+    setupCanvas();
+    let hang = false;
+    const sdk = fakeSdk({
+      predict: () => (hang ? new Promise(() => {}) : Promise.resolve([{ items: ITEMS }])),
+    });
+    const workers: Array<ReturnType<typeof fakeWorker>> = [];
+    const factory = () =>
+      createPaddleEngine({
+        createWorker: () => {
+          const w = fakeWorker(sdk);
+          workers.push(w);
+          return w;
+        },
+        origin: ORIGIN,
+      });
+    const pool = new EnginePool();
+    const run = (signal = new AbortController().signal) =>
+      runOcr(file, options, vi.fn(), signal, { ...deps(factory), pool });
+    await run();
+    await run();
+    expect(workers).toHaveLength(1);
+    expect(workers[0]!.terminated).toBe(0);
+    expect(sdk.createSdk).toHaveBeenCalledOnce();
+    expect(sdk.instance.initialize).toHaveBeenCalledOnce();
+    expect(sdk.instance.predict).toHaveBeenCalledTimes(2);
+    hang = true;
+    const ctrl = new AbortController();
+    const failure = expect(run(ctrl.signal)).rejects.toBeInstanceOf(OcrCancelled);
+    await vi.advanceTimersByTimeAsync(1);
+    ctrl.abort();
+    await failure;
+    expect(workers[0]!.terminated).toBeGreaterThan(0);
+    hang = false;
+    await run();
+    expect(workers).toHaveLength(2);
+    expect(workers[1]!.terminated).toBe(0);
   });
 
   it("cancels a running recognition and ends the worker", async () => {

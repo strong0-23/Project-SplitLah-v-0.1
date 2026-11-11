@@ -171,3 +171,60 @@ D4 stays as it is.
 the `Receipt` interface, the storage schema, the bill maths or the wizard flow, which is beyond the
 MVP's scope.
 **Where.** No code change; recorded so later work does not port them without a new decision.
+
+## Engine comparison, Phase 2c (owner decisions, 11 Nov 2026)
+
+### Dataset size: about 18 receipts, about 6 development and 12 held-out
+**Rule.** The comparison uses about 18 receipts across at least 8 materially distinct layouts,
+split by merchant layout into about 6 development and about 12 held-out receipts (a layout is in
+one set only). This replaces the earlier plan of about 30 receipts (10 development, 20 held-out).
+The decision rule and all its thresholds are unchanged. The report states the smaller sample and its
+lower statistical confidence: each engine's share is shown as a count (x/12) next to the
+percentage, and at n = 12 one receipt is about 8 percentage points.
+**Why.** A smaller set the owner can collect and verify carefully, with every reference written
+independently of OCR, is worth more than a larger, less checked one. Showing counts keeps the
+uncertainty visible: for example, rule (b)'s 10 points means at least 2 more receipts out of 12.
+**Where.** `docs/OWNER-DATASET-GUIDE.md`, `docs/reports/2026-11-engine-comparison.md`,
+`tools/receipt-regression/comparison.ts` (shares shown as x/n with the percentage).
+
+### Scoring: extra correction actions
+**Rule.** A receipt's score is the number of Review-screen field actions a user must make to reach
+a correct bill, against the owner's verified reference, counting only fields whose state is
+"known": +1 per missing reference product (add); +1 per extra product row (delete); +1 per wrong
+quantity on a matched product; +1 per wrong line amount on a matched product; +1 for each wrong
+charge field (discount, service and GST amounts, and GST inclusive/exclusive when known); +1 if the
+printed total field is wrong. The calculated total is derived and never an action. Products are
+matched with the harness's existing matching, unchanged. A receipt "needs at most 2 extra
+corrections" when this count is 2 or less; a failed or timed-out scan never does, and stays in the
+denominator.
+**Why.** It measures what the owner cares about (how much fixing a scan needs) in a way that is
+simple to check. It simplifies the owner's earlier proof-bound evaluator (approved-comparison-r1)
+while keeping all of its thresholds: ≤ 2 corrections, +10 points, 8 s median warm phone scan,
+correctness on each phone, and the 70% stop rule.
+**Where.** `tools/receipt-regression/corrections.ts` (tested in `corrections.test.ts`),
+`tools/receipt-regression/README.md`, `docs/reports/2026-11-engine-comparison.md`.
+
+### How the decision rule is applied (accepted 11 Nov 2026)
+**Rule.** Rule (c): each phone's Paddle warm times are pooled and their median must be ≤ 8 s.
+Rule (d): per phone, Paddle's number of receipts within 2 corrections must be at least
+Tesseract's, over the same receipts scanned with both engines and a verified reference. Stop rule:
+an engine reaches 70% only if it does so in both Edge and Firefox. Each phone is tested on at least
+4 receipts; the owner names the phones.
+**Why.** These make the rules checkable from IDs-and-counts data without any receipt content, and
+never let missing data count as a pass.
+**Where.** `tools/receipt-regression/comparison.ts` (`verdict`, tested in `comparison.test.ts`).
+
+### Keep a loaded OCR engine between scans (11 Nov 2026)
+**Rule.** In a page session, a loaded engine (worker and models) is kept for the next scan, for
+both engines alike. It is disposed after 3 minutes idle (`ENGINE_IDLE_MS`), on page hide/unload
+(`pagehide`), when another engine is chosen, and on any scan error, cancel or timeout. Cancel still
+stops a running recognition at once (the engine is terminated and the next scan loads a new one).
+A concurrent second scan gets its own single-use engine. Orientation probes and the 60 s / 120 s
+load limits are unchanged. `runOcr` without a pool keeps the old one-shot behaviour; `scanReceipt`
+uses the page's shared pool.
+**Why.** Restarting the engine on every scan was an app inefficiency, not a measurement choice:
+a user's second scan waited for the engine to start again. Fixing it before the comparison means
+"warm" measures what users get, and it applies equally to both engines, so it is not tuning against
+data.
+**Where.** `src/lib/scan/engine-pool.ts`, `scan.ts` (`ScanDeps.pool`), `index.ts` (`scanReceipt`),
+`engine-reuse.test.ts`, `paddle-engine.test.ts`.

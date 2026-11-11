@@ -175,10 +175,12 @@ your phone).
 3. Push a commit to the pull request's branch (or select **Retry build** on its latest build).
    Settings only apply to builds started after the change.
 4. Open the Preview URL from the pull request comment with `?engine=paddle` added, for example
-   `https://<preview-url>/?engine=paddle`.
+   `https://<preview-url>/?engine=paddle`. The phone timing page for the engine comparison is at
+   `https://<preview-url>/dev/engine-timing` (docs/reports/2026-11-engine-comparison.md, "Phones").
 5. Check the next production build of `main`: its log should show the "ignored on the production
    branch" line, and `https://splitlah.<your-subdomain>.workers.dev/paddle/PP-OCRv5_mobile_det.tar`
-   should not download a file.
+   should not download a file, and `https://splitlah.<your-subdomain>.workers.dev/dev/engine-timing`
+   should show "Page not found".
 
 To turn it off, delete the variable in the same place; the next preview build has no Paddle.
 

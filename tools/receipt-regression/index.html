@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>SplitLah local receipt regression</title>
+    <title>SplitLah local receipt regression and engine comparison</title>
     <style>
       body {
         font: 16px system-ui;
@@ -68,6 +68,10 @@
       #status {
         white-space: pre-wrap;
       }
+      fieldset[hidden],
+      label[hidden] {
+        display: none;
+      }
       textarea {
         width: 100%;
         min-height: 9rem;
@@ -78,33 +82,77 @@
     </style>
   </head>
   <body>
-    <h1>Local receipt regression: parser-v2 vs rework</h1>
+    <h1>Local receipt regression: engines and parsers</h1>
     <p>
-      Each receipt's text is read by <b>both</b> parsers: the parser-v2 baseline (frozen copy,
-      commit a80f7e3) and the rework parser this branch ships. Files stay in this browser's memory.
-      Photos are never uploaded; recognizer assets download on first OCR use.
+      Runs on this computer only. Files stay in this browser's memory; photos are never uploaded.
+      Engine files (Tesseract, PaddleOCR) come from this page's own address.
     </p>
     <label
       >Source
       <select id="source">
-        <option value="owner">Owner references: photos + verified references (Browser OCR)</option>
+        <option value="engine">
+          Engine comparison (Phase 2c): Tesseract vs Paddle, photos + verified references
+        </option>
+        <option value="owner">
+          Parser gate (Batch 1b): parser-v2 vs rework, photos + verified references
+        </option>
         <option value="dataset">dataset.json folder (legacy format)</option>
       </select></label
     >
-    <fieldset id="owner-controls">
-      <legend>Owner references (paired by REG id)</legend>
+    <fieldset id="heldout-box">
+      <legend>Held-out mode</legend>
       <label
-        >Photos folder (e.g. development-working; only REG001.jpg … are read)
+        ><input id="heldout" type="checkbox" checked /> Held-out mode: show and keep receipt IDs and
+        counts only (no photos, OCR text, field values or check names; full report download off).
+        Engine runs made with this on count as the held-out set; with it off they are development
+        (preflight) runs and give no verdict.</label
+      >
+    </fieldset>
+    <fieldset id="owner-controls">
+      <legend>Photos and verified references (paired by REG id)</legend>
+      <label
+        >Photos folder (only REG001.jpg/.png/.webp … are read)
         <input id="photos" type="file" webkitdirectory multiple
       /></label>
       <label
-        >Verified references folder (e.g. owner-worksheet/reference-versions;
-        REG001.owner-inventory-v2.reference.private.json …)
+        >… or select the photo files themselves (any browser)
+        <input id="photos-files" type="file" multiple accept=".jpg,.jpeg,.png,.webp"
+      /></label>
+      <label
+        >Verified references folder (REG001.owner-inventory-vN.reference.private.json …)
         <input id="references" type="file" webkitdirectory multiple
       /></label>
+      <label
+        >… or select the reference files themselves (any browser)
+        <input id="references-files" type="file" multiple accept=".json"
+      /></label>
       <small
-        >Every reference is checked with the owner's contract; one failure refuses the run. Only
-        fields with state "known" are scored.</small
+        >Choose the folders here only; never type or share their paths. Every reference is checked
+        with the owner's contract; one failure refuses the run. Only fields with state "known" are
+        scored.</small
+      >
+    </fieldset>
+    <fieldset id="engine-controls">
+      <legend>Engine comparison</legend>
+      <label
+        >Engines
+        <select id="engines">
+          <option value="both">Both (every receipt with Tesseract, then with Paddle)</option>
+          <option value="tesseract">Tesseract only</option>
+          <option value="paddle">Paddle only</option>
+        </select></label
+      >
+      <label
+        >Warm re-scans per receipt
+        <select id="warm">
+          <option value="3">3 (default: median of 3 warm scans)</option>
+          <option value="0">0 (correctness only, no warm timing)</option>
+        </select></label
+      >
+      <small
+        >Each receipt is scanned once (first scan), then re-scanned in this page session (warm). For
+        a true first-use cold start, open this page in a fresh private window. Scoring uses the
+        app's parser with no saved preferences (first use).</small
       >
     </fieldset>
     <fieldset id="legacy-controls" hidden>
@@ -122,16 +170,24 @@
       >Code revision / experiment label
       <input id="revision" placeholder="e.g. commit SHA + local changes"
     /></label>
-    <label
+    <label id="baseline-box"
       >Earlier report to compare with (optional) <input id="baseline" type="file" accept=".json"
     /></label>
     <button id="run" disabled>Run sequential suite</button
     ><button id="cancel" disabled>Cancel suite</button
     ><button id="save" disabled>Download full report (private)</button>
-    <p id="status" role="status">Select the photos folder and the verified references folder.</p>
-    <h2>Summary scores (safe to share: receipt IDs and counts only)</h2>
+    <p id="status" role="status">Select the photos and the verified references.</p>
+    <h2>Summary (safe to share: receipt IDs and counts only)</h2>
     <textarea id="summary" readonly placeholder="Appears after a run."></textarea>
-    <button id="copy" disabled>Copy summary scores</button>
+    <button id="copy" disabled>Copy summary</button>
+    <h2>Combine with other browsers and phones</h2>
+    <p>
+      Paste the summary block from the other desktop browser (Edge or Firefox) and the result lines
+      from the phone timing page, then select Combine. Only the run, receipt and phone lines are
+      read; the verdict is recomputed.
+    </p>
+    <textarea id="pasted" placeholder="Paste summaries and phone result lines here"></textarea>
+    <button id="combine">Combine</button>
     <div id="results"></div>
     <script type="module" src="/main.ts"></script>
   </body>
