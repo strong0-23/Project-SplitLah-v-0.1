@@ -4,36 +4,38 @@ A separate, localhost-only Vite page (`npm run receipts:dev`, http://127.0.0.1:8
 dependencies. Files are read into the browser's memory only: nothing is uploaded, stored or logged.
 It has three sources:
 
-1. **Engine comparison (Phase 2c, default)**: each photo is scanned by Tesseract and/or PaddleOCR
-   through the app's own scan pipeline and scored against your verified references by **extra
-   correction actions**. The decision rule (a)–(d) and the 70% stop rule are applied.
+1. **Engine scoring (default)**: each photo is scanned by Tesseract through the app's own scan
+   pipeline and scored against your verified references by **extra correction actions** and
+   **silent errors**, with first and warm scan times.
 2. **Parser gate (Batch 1b)**: one OCR reading per photo, read by both parser-v2 (baseline) and the
    rework parser, with the Batch 1b merge gate.
 3. **dataset.json folder (legacy)**: the parser-v2 harness format.
 
-## Engine comparison (Phase 2c)
+## Engine scoring (Tesseract)
+
+The Phase 2c engine comparison (Tesseract vs PaddleOCR) is finished: Paddle did not replace
+Tesseract and was removed from the app on 11 Nov 2026 (`docs/reports/2026-11-engine-comparison.md`,
+`docs/DECISIONS.md`). Its decision rule (a)–(d), the 70% stop rule, the "Both" engine mode and the
+phone timing page went with it. The scoring stays, for Tesseract alone, so later parser or
+preprocessing changes can be measured on the development set and on a fresh held-out set.
 
 ### What it does
 
-- Every receipt is scanned with **Tesseract, then every receipt with Paddle** (engine "Both"), or
-  with one engine. Both engines run through `scanReceipt` in `src/lib/scan`, exactly as in the app,
-  with the engine injected through the existing `OcrEngine` contract; Paddle is the app's own
-  dev-only engine (`engineFactoryFor("?engine=paddle")`).
-- Engine files come from the harness's own address: the dev server serves only the pinned files in
-  `src/lib/scan/tesseract-assets.ts` (from `public/tesseract/`) and `paddle-assets.ts` (from
-  `paddle-models/`); ONNX Runtime's WASM and the Paddle worker come from `node_modules` and
-  `src/lib/scan` like any other module. No CDN.
+- Every receipt is scanned with Tesseract through `scanReceipt` in `src/lib/scan`, exactly as in
+  the app, with the engine injected through the `OcrEngine` contract. Another on-device engine
+  would be added in `comparison.ts` (`ENGINES`) and `main.ts` (`ENGINE_FACTORIES`).
+- Tesseract's files come from the harness's own address: the dev server serves only the pinned
+  files in `src/lib/scan/tesseract-assets.ts` (from `public/tesseract/`). No CDN.
 - Each receipt is scanned once (**first scan**), then re-scanned **3 times** in the same page
   session (**warm**: the engine is already loaded); the warm time is the median of the 3. Like the
   app, `scanReceipt` keeps the loaded engine between scans (`src/lib/scan/engine-pool.ts`), so the
-  very first scan of each engine in the page is the session's **cold** scan (it includes loading
-  the engine; for a first download, use a fresh private window) and later scans are recognition
-  only. Switching engine disposes the other one.
+  very first scan in the page is the session's **cold** scan (it includes loading the engine; for
+  a first download, use a fresh private window) and later scans are recognition only.
 - Scoring uses the receipt the app itself would show, with **no saved preferences** (first use is
   the primary condition; `scanReceipt` never reads saved preferences).
-- Per receipt and engine it records matched, missing and extra products, quantity and amount
-  correctness, charge fields, the printed total, silent errors, the extra-correction count, and the
-  first and warm scan times. It also notes whether the warm scans read the same text as the first.
+- Per receipt it records matched, missing and extra products, quantity and amount correctness,
+  charge fields, the printed total, silent errors, the extra-correction count, and the first and
+  warm scan times. It also notes whether the warm scans read the same text as the first.
 
 ### Extra correction actions (owner-confirmed, 11 Nov 2026)
 
@@ -78,32 +80,14 @@ of its thresholds. Code: `corrections.ts`; tests: `corrections.test.ts`.
 A **silent error** is a wrong financial field the app shows no warning or flag for (unchanged from
 Batch 1b; see "What the scores mean" below).
 
-### Decision rule (owner-approved, unchanged)
+### Aggregates
 
-Paddle replaces Tesseract only if **all** hold:
-
-- **(a)** zero silent financial errors (Paddle);
-- **(b)** on the held-out set, Paddle's share of receipts within 2 corrections is at least
-  **10 percentage points** higher than Tesseract's;
-- **(c)** Paddle's median **warm** scan time on **each tested phone** is **8 s or less**;
-- **(d)** Paddle's correctness on each tested phone is at least Tesseract's.
-
-If **neither** engine reaches **70%** of receipts within 2 corrections, engine work stops.
-
-How the tool applies it (`comparison.ts`, tested in `comparison.test.ts`):
-
-- (a), (b) and the stop rule use **complete held-out runs in Both mode**. The desktop verdict needs
-  **both Edge and Firefox**; each rule must hold in each. A missing browser is **pending**, never a
-  pass. Chrome or other browsers are shown as informational only. Two runs of the same browser, or
-  Edge and Firefox runs over different receipts, leave the rules pending.
-- An engine "reaches 70%" only if it does so in both Edge and Firefox.
-- (b) is computed exactly in whole receipts: at n = 12, one receipt is about 8.3 points, so Paddle
-  needs at least **2 more** receipts within 2 corrections than Tesseract.
-- (c) and (d) use the phone timing page's result lines (below). (c): Paddle's warm times on that
-  phone, pooled, median ≤ 8 s; a failed warm scan counts as the slowest. (d): on that phone, over the
-  same receipts scanned with both engines and a verified reference, Paddle's count within 2 is at
-  least Tesseract's.
-- Anything without data is **pending**. The tool never changes the default engine; you decide.
+Each run's summary gives, per engine: receipts within 2 corrections as a count and a percentage
+(`within-2=x/n (p%)`), silent errors, failed scans, unstable re-reads, the session-cold scan and
+the median first and warm scan times; then the correction actions by field, and the within-2
+count per photo-condition tag. Failed and timed-out scans stay in every denominator. At small n,
+read the count, not the percentage: at n = 12, one receipt is about 8.3 points. There is no
+verdict: you judge the numbers.
 
 ### Held-out mode
 
@@ -114,17 +98,15 @@ On by default. With it on:
 - "Download full report" is off, and comparison with an earlier report is hidden;
 - nothing is written to disk or browser storage, and the harness writes nothing to the console. The
   dev server does **not** copy the browser console into the terminal (Vite 8 does that by default
-  when an AI agent runs it; turned off in `vite.config.ts`). The engines' own runtime warnings
-  (ONNX Runtime model-loading notes) can still appear in the browser's DevTools console; they
-  contain no receipt content;
-- an engine run made with it on is labelled `set=held-out`. With it off, a run is a
-  `set=development` preflight and gives **no** verdict.
+  when an AI agent runs it; turned off in `vite.config.ts`);
+- an engine run made with it on is labelled `set=held-out`. With it off, a run is labelled
+  `set=development`.
 
 Choose the held-out folders **in the browser's file picker only**. Never type their paths into a
 chat, a terminal Claude can see, or this repository. See `docs/OWNER-DATASET-GUIDE.md` for where to
 keep them.
 
-### Owner run: Edge, then Firefox (Windows PowerShell)
+### Owner run (Windows PowerShell)
 
 From the repository root:
 
@@ -137,41 +119,27 @@ npm.cmd run receipts:test
 npm.cmd run receipts:dev
 ```
 
-1. **Edge**: open http://127.0.0.1:8081/. Source "Engine comparison" and Held-out mode are already
-   selected.
-2. **Photos**: choose your held-out photos folder (or select the photo files themselves with the
-   second picker). **References**: choose the held-out references folder (or the files).
-   The status line lists the paired REG ids.
-3. Engines **Both**, warm re-scans **3**. Revision: the output of `git rev-parse --short HEAD`.
-4. **Run sequential suite** and leave the tab in front until it finishes (about 1 minute per
-   receipt on a typical desktop; Paddle takes most of it).
-5. **Copy summary** and keep it. Its `run | …` line must show `name-match=recognisable-0.70`; if
-   it doesn't, the checkout predates the owner's name rule: stop and update it.
-6. **Firefox**: open the same address in Firefox and repeat steps 2–4.
-7. In Firefox, paste the Edge summary into "Combine with other browsers and phones", add any phone
-   result lines, and select **Combine**. Copy the combined summary and send only that block.
-
-Preflight first (brief, Phase 2c step 2): the same steps on the **development** receipts with
-Held-out mode **off** (details visible), in Edge and Firefox.
-
-### Phone timing page
-
-On a preview build with the engine switch on (docs/DEPLOY.md, "Paddle on in Cloudflare preview
-builds"), open `https://<preview-url>/dev/engine-timing` on the phone. The page does not exist on
-`main` or any production build. Per engine and receipt photo it runs 1 first scan and 3 warm
-re-scans and shows the median warm time, the device's user agent and a result line to copy. With
-the receipt's verified reference chosen too, it also counts the extra corrections (rule d). It
-shows no receipt content. Steps are in `docs/reports/2026-11-engine-comparison.md`, "Owner run".
+1. Open http://127.0.0.1:8081/ (Edge or Firefox). Source "Engine scoring" and Held-out mode are
+   already selected. For development receipts, turn Held-out mode off to see per-field detail.
+2. **Photos**: choose your photos folder (or select the photo files themselves with the second
+   picker). **References**: choose the references folder (or the files). The status line lists the
+   paired REG ids.
+3. Warm re-scans **3** (or 0 for correctness only). Revision: the output of
+   `git rev-parse --short HEAD`.
+4. **Run sequential suite** and leave the tab in front until it finishes.
+5. **Copy summary**. For a held-out run, send only that block.
+6. Optional: run the same set in a second browser and paste the first browser's summary into
+   "Combine with other browsers", then select **Combine**.
 
 ### Summary format
 
-Lines like `run | …`, `receipt | …` and `phone | …` are machine-readable and the only lines read
-back when pasted; everything else (aggregates, verdict) is recomputed. Run and phone lines carry
-`name-match=` (the item-name rule used for scoring). **Summaries that used different rules are not
-combined:** Combine refuses them (a run made in this page is kept, the pasted ones are left out),
-and a line without the field, written before the rule existed, counts as `exact`. Re-run every
-browser and phone with the same harness revision. Timing-only phone lines (no reference) are not
-scored, so their rule does not matter. Receipt IDs must look like
+Lines like `run | …` and `receipt | …` are machine-readable and the only lines read back when
+pasted; everything else (aggregates) is recomputed. Run lines carry `name-match=` (the item-name
+rule used for scoring). **Summaries that used different rules are not combined:** Combine refuses
+them (a run made in this page is kept, the pasted ones are left out), and a line without the field,
+written before the rule existed, counts as `exact`. Re-run every browser with the same harness
+revision. Summaries made before Paddle's removal that name `paddle` (and old `phone | …` lines)
+are no longer read: the run line is reported as unreadable. Receipt IDs must look like
 `REG001` (letters then digits); a line with anything else in an ID is ignored and reported by line
 number. Per-receipt field detail (`detail | …`) appears only in development runs.
 
@@ -180,21 +148,17 @@ number. Per-receipt field detail (`detail | …`) appears only in development ru
 ```bash
 PLAYWRIGHT_MODULE=/path/to/node_modules/playwright/index.mjs CHROME_PATH=/path/to/chrome \
   node tools/receipt-regression/smoke/engine-smoke.mjs
-# with a switch-on build served by `wrangler dev` on :8787:
-node tools/receipt-regression/smoke/phone-page-smoke.mjs http://127.0.0.1:8787
 ```
 
-They render two invented receipts as text onto a canvas, build their references from
-`reference-format/reference-template.json` (checked with the contract), and run the harness in Both
-mode (held-out and development) and the parser gate, or the phone page with each engine. Playwright
-is not a project dependency.
+It renders two invented receipts as text onto a canvas, builds their references from
+`reference-format/reference-template.json` (checked with the contract), and runs engine scoring
+(held-out and development) and the parser gate. Playwright is not a project dependency.
 
 ### Firefox
 
 The page uses no Chrome-only API: folder pickers (`webkitdirectory`, which Firefox also supports)
 have a plain multi-file picker next to them; copying falls back to selecting the text when the
-Clipboard API is refused; hashing uses Web Crypto (available on 127.0.0.1). Paddle's worker needs
-module workers and `OffscreenCanvas` in workers (Firefox 114+ and 105+).
+Clipboard API is refused; hashing uses Web Crypto (available on 127.0.0.1).
 
 ## Parser gate (Batch 1b): owner's scored run (Windows PowerShell, Browser OCR mode)
 
@@ -253,7 +217,7 @@ Format and contract: `reference-format/` (blank template, contract, notes).
   total (D4), is compared with payable − rounding; parser-v2 with the payable.
 - Item names match exactly (case and spaces ignored), or the name followed by a note the app added in
   brackets, e.g. "DRY MEE POK (MEMBER DISC -1.00)". This is the `exact` name rule; the parser gate
-  always uses it, unchanged (the engine comparison's recognisable-name rule does not apply here).
+  always uses it, unchanged (engine scoring's recognisable-name rule does not apply here).
 
 ## What the scores mean
 

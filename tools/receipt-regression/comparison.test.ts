@@ -1,5 +1,6 @@
 /**
- * Phase 2c decision rule, summaries and pasting. Synthetic IDs and counts only.
+ * Engine scoring summaries, aggregates and pasting (single-engine since Paddle's removal,
+ * 11 Nov 2026). Synthetic IDs and counts only.
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -11,12 +12,8 @@ import {
   median,
   nameMatchConflict,
   parseSummaries,
-  phoneLine,
   summaryBlock,
-  verdict,
   type DesktopRun,
-  type EngineId,
-  type PhoneResult,
   type ReceiptEngineResult,
   type RunInfo,
 } from "./comparison";
@@ -33,12 +30,12 @@ const UA = {
     "Mozilla/5.0 (Linux; Android 15; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36",
 };
 
-/** A result: `c` extra corrections, or "fail" for a failed scan. */
-function res(id: string, engine: EngineId, c: number | "fail", silent = 0): ReceiptEngineResult {
+/** A Tesseract result: `c` extra corrections, or "fail" for a failed scan. */
+function res(id: string, c: number | "fail", silent = 0): ReceiptEngineResult {
   return c === "fail"
     ? {
         id,
-        engine,
+        engine: "tesseract",
         status: "failed",
         stage: "timeout",
         corrections: null,
@@ -49,7 +46,7 @@ function res(id: string, engine: EngineId, c: number | "fail", silent = 0): Rece
       }
     : {
         id,
-        engine,
+        engine: "tesseract",
         status: "ok",
         corrections: { ...zero, amount: c, total: c },
         silent,
@@ -59,29 +56,17 @@ function res(id: string, engine: EngineId, c: number | "fail", silent = 0): Rece
       };
 }
 
-/** A run of n receipts where the first `t` (Tesseract) / `p` (Paddle) need ≤ 2 corrections. */
+/** A run of n receipts where the first `ok` need ≤ 2 corrections; the first has `silent` errors. */
 function run(
   browser: string,
   n: number,
-  t: number,
-  p: number,
+  ok: number,
   over: Partial<RunInfo> = {},
-  paddleSilent = 0,
+  silent = 0,
 ): DesktopRun {
   const results: ReceiptEngineResult[] = [];
-  for (const [engine, ok] of [
-    ["tesseract", t],
-    ["paddle", p],
-  ] as const)
-    for (let i = 0; i < n; i++)
-      results.push(
-        res(
-          `REG${100 + i}`,
-          engine,
-          i < ok ? 1 : 3,
-          engine === "paddle" && i === 0 ? paddleSilent : 0,
-        ),
-      );
+  for (let i = 0; i < n; i++)
+    results.push(res(`REG${100 + i}`, i < ok ? 1 : 3, i === 0 ? silent : 0));
   return {
     info: {
       set: "held-out",
@@ -90,7 +75,7 @@ function run(
       version: "1.0",
       os: "Windows",
       revision: "abc1234",
-      engines: ["tesseract", "paddle"],
+      engines: ["tesseract"],
       warmRuns: 3,
       nameMatch: "recognisable-0.70",
       complete: true,
@@ -99,29 +84,6 @@ function run(
     results,
   };
 }
-
-function phone(
-  engine: EngineId,
-  id: string,
-  warm: Array<number | null>,
-  corrections: number | null,
-  label = "Pixel 8",
-): PhoneResult {
-  return {
-    phone: label,
-    engine,
-    id,
-    status: "ok",
-    firstKind: "cold",
-    firstMs: 20000,
-    warmMs: warm,
-    corrections,
-    silent: corrections === null ? null : 0,
-    userAgent: UA.android,
-  };
-}
-const rule = (v: ReturnType<typeof verdict>, r: string) =>
-  v.rules.find((x) => x.rule === r)!.status;
 
 describe("median", () => {
   it("handles odd, even, empty and failed (Infinity) values", () => {
@@ -160,188 +122,54 @@ describe("describeUserAgent", () => {
   });
 });
 
-describe("desktop rules need BOTH Edge and Firefox", () => {
-  it("is pending, never pass, while a required runtime is missing", () => {
-    const v = verdict([run("Edge", 12, 6, 12)], []);
-    expect(rule(v, "a")).toBe("pending");
-    expect(rule(v, "b")).toBe("pending");
-    expect(v.decision).toBe("pending");
-    expect(v.notes).toContain("Firefox: missing");
-  });
-
-  it("can still fail on the runtime that is present", () => {
-    const v = verdict([run("Edge", 12, 6, 6, {}, 1)], []);
-    expect(rule(v, "a")).toBe("fail");
-    expect(rule(v, "b")).toBe("fail");
-    expect(v.decision).toBe("fail");
-  });
-
-  it("passes (a) and (b) only when both runtimes pass", () => {
-    const v = verdict([run("Edge", 12, 6, 12), run("Firefox", 12, 6, 12)], []);
-    expect(rule(v, "a")).toBe("pass");
-    expect(rule(v, "b")).toBe("pass");
-    // (c) and (d) have no phone data yet: the decision stays pending.
-    expect(rule(v, "c")).toBe("pending");
-    expect(v.decision).toBe("pending");
-  });
-
-  it("does not count development, incomplete, single-engine or other-browser runs", () => {
-    for (const over of [
-      { set: "development" as const },
-      { complete: false },
-      { engines: ["paddle"] as EngineId[] },
-    ]) {
-      const v = verdict([run("Edge", 12, 6, 12, over), run("Firefox", 12, 6, 12)], []);
-      expect(rule(v, "b"), JSON.stringify(over)).toBe("pending");
-    }
-    const chrome = verdict([run("Chrome", 12, 0, 12), run("Firefox", 12, 6, 12)], []);
-    expect(rule(chrome, "b")).toBe("pending");
-    expect(chrome.notes.join(" ")).toContain("informational only");
-  });
-
-  it("refuses two runs of one browser, and different receipt sets", () => {
-    expect(
-      rule(
-        verdict([run("Edge", 12, 6, 12), run("Edge", 12, 6, 12), run("Firefox", 12, 6, 12)], []),
-        "b",
-      ),
-    ).toBe("pending");
-    expect(rule(verdict([run("Edge", 12, 6, 12), run("Firefox", 11, 6, 11)], []), "b")).toBe(
-      "pending",
-    );
-  });
-});
-
-describe("rule (b): at least 10 points more receipts within 2 corrections", () => {
-  // n = 12: one receipt is about 8.3 points, so Paddle needs 2 more receipts than Tesseract.
-  it("fails at +1 receipt (+8.3 points) and passes at +2 (+16.7 points) with n = 12", () => {
-    expect(rule(verdict([run("Edge", 12, 7, 8), run("Firefox", 12, 7, 8)], []), "b")).toBe("fail");
-    expect(rule(verdict([run("Edge", 12, 7, 9), run("Firefox", 12, 7, 9)], []), "b")).toBe("pass");
-  });
-
-  it("passes at exactly +10 points (n = 10, +1 receipt)", () => {
-    expect(rule(verdict([run("Edge", 10, 5, 6), run("Firefox", 10, 5, 6)], []), "b")).toBe("pass");
+describe("aggregates", () => {
+  it("counts receipts within 2 corrections, silent errors and timings", () => {
+    const a = aggregate(run("Edge", 12, 5, {}, 2), "tesseract");
+    expect(a).toMatchObject({
+      receipts: 12,
+      within: 5,
+      silent: 2,
+      failed: 0,
+      unstable: 0,
+      sessionColdMs: 3000,
+      firstMedianMs: 3000,
+      warmMedianMs: 2100,
+    });
+    expect(a.fields.amount).toBe(5 * 1 + 7 * 3);
   });
 
   it("keeps failed scans in the denominator", () => {
-    const r = run("Edge", 12, 0, 0);
-    r.results = r.results.map((x, i) =>
-      x.engine === "paddle"
-        ? i % 12 < 10
-          ? res(x.id, "paddle", 0)
-          : res(x.id, "paddle", "fail")
-        : res(x.id, "tesseract", i < 8 ? 0 : 5),
-    );
-    const a = aggregate(r, "paddle");
+    const r = run("Edge", 12, 0);
+    r.results = r.results.map((x, i) => (i < 10 ? res(x.id, 0) : res(x.id, "fail")));
+    const a = aggregate(r, "tesseract");
     expect(a).toMatchObject({ receipts: 12, within: 10, failed: 2 });
-    // Paddle 10/12 vs Tesseract 8/12: +16.7 points.
-    expect(rule(verdict([r, { ...r, info: { ...r.info, browser: "Firefox" } }], []), "b")).toBe(
-      "pass",
+    // A failed scan counts as the slowest first scan.
+    expect(a.firstMedianMs).toBe(3000);
+  });
+
+  it("counts a cancelled scan as a failure, never within 2", () => {
+    const r = run("Edge", 12, 12);
+    r.results[0] = { ...res("REG100", 0), status: "cancelled", corrections: null };
+    expect(aggregate(r, "tesseract")).toMatchObject({ receipts: 12, within: 11, failed: 1 });
+  });
+
+  it("writes one engine line per run, with the within-2 share as a count", () => {
+    expect(summaryBlock(run("Edge", 7, 0, {}, 3), true)).toContain(
+      "engine | engine=tesseract | within-2=0/7 (0.0%) | silent=3 | failed=0",
     );
-  });
-
-  it("counts a receipt with no Paddle row as a failure", () => {
-    const r = run("Edge", 12, 6, 12);
-    r.results = r.results.filter((x) => !(x.engine === "paddle" && x.id === "REG100"));
-    expect(aggregate(r, "paddle")).toMatchObject({ receipts: 12, within: 11, failed: 1 });
-  });
-});
-
-describe("70% stop rule", () => {
-  it("needs 9 of 12 (75%) to reach 70%; 8 of 12 (66.7%) does not", () => {
-    const stop = verdict([run("Edge", 12, 8, 8), run("Firefox", 12, 8, 8)], []);
-    expect(stop.stop).toBe("fail");
-    expect(stop.rules.find((r) => r.rule === "stop")!.text).toContain("STOP ENGINE WORK");
-    expect(verdict([run("Edge", 12, 9, 8), run("Firefox", 12, 9, 8)], []).stop).toBe("pass");
-  });
-
-  it("an engine must reach 70% in each required runtime", () => {
-    expect(verdict([run("Edge", 12, 9, 8), run("Firefox", 12, 8, 8)], []).stop).toBe("fail");
-  });
-
-  it("is pending while a runtime is missing, unless both engines already fall short", () => {
-    expect(verdict([run("Edge", 12, 9, 9)], []).stop).toBe("pending");
-    expect(verdict([run("Edge", 12, 5, 5)], []).stop).toBe("fail");
-  });
-});
-
-describe("phone rules (c) and (d)", () => {
-  const desktop = [run("Edge", 12, 6, 12), run("Firefox", 12, 6, 12)];
-
-  it("(c) passes at a median warm scan of 8.0 s and fails above it", () => {
-    expect(rule(verdict(desktop, [phone("paddle", "REG100", [7900, 8000, 8100], null)]), "c")).toBe(
-      "pass",
-    );
-    expect(rule(verdict(desktop, [phone("paddle", "REG100", [8000, 8100, 8200], null)]), "c")).toBe(
-      "fail",
-    );
-  });
-
-  it("(c) counts failed warm scans as slowest, and needs Paddle timing on every phone", () => {
-    expect(rule(verdict(desktop, [phone("paddle", "REG100", [7000, null, null], null)]), "c")).toBe(
-      "fail",
-    );
-    expect(
-      rule(
-        verdict(desktop, [
-          phone("paddle", "REG100", [7000, 7000, 7000], null),
-          phone("tesseract", "REG100", [3000, 3000, 3000], null, "iPhone 15"),
-        ]),
-        "c",
-      ),
-    ).toBe("pending");
-  });
-
-  it("(d) compares receipts within 2 corrections per phone, over the same receipts", () => {
-    const both = (p: number, t: number) => [
-      phone("paddle", "REG100", [7000, 7000, 7000], p),
-      phone("tesseract", "REG100", [3000, 3000, 3000], t),
-    ];
-    expect(rule(verdict(desktop, both(2, 2)), "d")).toBe("pass");
-    expect(rule(verdict(desktop, both(3, 1)), "d")).toBe("fail");
-    // No reference on the phone: correctness can't be judged.
-    expect(
-      rule(
-        verdict(
-          desktop,
-          both(2, 2).map((x) => ({ ...x, corrections: null })),
-        ),
-        "d",
-      ),
-    ).toBe("pending");
-    // Different receipts per engine.
-    expect(
-      rule(
-        verdict(desktop, [
-          phone("paddle", "REG100", [7000], 0),
-          phone("tesseract", "REG101", [3000], 0),
-        ]),
-        "d",
-      ),
-    ).toBe("pending");
-  });
-
-  it("the decision passes only when every rule passes", () => {
-    const phones = [
-      phone("paddle", "REG100", [7000, 7000, 7000], 1),
-      phone("tesseract", "REG100", [3000, 3000, 3000], 1),
-    ];
-    expect(verdict(desktop, phones).decision).toBe("pass");
-    expect(verdict([desktop[0]!], phones).decision).toBe("pending");
   });
 });
 
 describe("summaries: IDs and counts only, and pasting", () => {
-  it("round-trips run, receipt and phone lines", () => {
-    const edge = run("Edge", 12, 6, 12);
-    const firefox = run("Firefox", 12, 6, 12);
-    const p = phone("paddle", "REG100", [7000, null, 7200], 1);
+  it("round-trips run and receipt lines", () => {
+    const edge = run("Edge", 12, 6);
+    const firefox = run("Firefox", 12, 6);
     const parsed = parseSummaries(
-      [summaryBlock(edge, true), summaryBlock(firefox, true), phoneLine(p)].join("\n\n"),
+      [summaryBlock(edge, true), summaryBlock(firefox, true)].join("\n\n"),
     );
     expect(parsed.problems).toEqual([]);
     expect(parsed.runs.map((r) => r.info.browser)).toEqual(["Edge", "Firefox"]);
-    expect(parsed.runs[0]!.results).toHaveLength(24);
+    expect(parsed.runs[0]!.results).toHaveLength(12);
     expect(parsed.runs[0]!.results[0]).toMatchObject({
       id: "REG100",
       engine: "tesseract",
@@ -349,41 +177,38 @@ describe("summaries: IDs and counts only, and pasting", () => {
       silent: 0,
       warmMs: [2000, 2100, 2200],
     });
-    expect(parsed.phones[0]).toMatchObject({
-      phone: "Pixel 8",
-      warmMs: [7000, null, 7200],
-      corrections: 1,
+    expect(aggregate(parsed.runs[1]!, "tesseract")).toMatchObject({
+      receipts: 12,
+      within: 6,
+      silent: 0,
     });
-    expect(verdict(parsed.runs, parsed.phones)).toEqual(verdict([edge, firefox], [p]));
   });
 
-  it("combining in one browser gives the same verdict as pasting everything", () => {
-    const edge = run("Edge", 12, 6, 12);
-    const firefox = run("Firefox", 12, 6, 12);
-    const fromEdge = summaryBlock(edge, true, parseSummaries(summaryBlock(firefox, true)));
-    expect(fromEdge).toContain("(a) zero silent financial errors (Paddle): PASS");
-    expect(fromEdge).toContain(
-      "(b) Paddle within-2 share >= Tesseract + 10 points (held-out): PASS",
+  it("combining in one browser shows each pasted run with its recomputed aggregate", () => {
+    const fromEdge = summaryBlock(
+      run("Edge", 12, 6),
+      true,
+      parseSummaries(summaryBlock(run("Firefox", 12, 3, {}, 1), true)),
     );
-    expect(fromEdge).toContain(
-      "n=12 held-out receipts: one receipt is about 8.3 percentage points",
-    );
-    expect(fromEdge).toContain("DECISION: PENDING");
+    expect(fromEdge.match(/^run \|/gm)).toHaveLength(2);
+    expect(fromEdge).toContain("engine | engine=tesseract | within-2=6/12 (50.0%) | silent=0");
+    expect(fromEdge).toContain("engine | engine=tesseract | within-2=3/12 (25.0%) | silent=1");
+    // The Paddle decision rule is gone.
+    expect(fromEdge).not.toMatch(/verdict|DECISION|Paddle|stop rule/i);
   });
 
   it("shows per-receipt field detail only outside held-out mode", () => {
-    const r = run("Edge", 2, 1, 1);
+    const r = run("Edge", 2, 1);
     expect(summaryBlock(r, true)).not.toContain("detail |");
     expect(summaryBlock(r, false)).toContain("detail | id=REG100 | engine=tesseract");
   });
 
   it("re-writes pasted text instead of copying it, so free text never passes through", () => {
     const pasted = [
-      "run | set=held-out | runtime=desktop | browser=Firefox | version=145.0 | os=Windows | revision=x | engines=tesseract,paddle | warm-runs=3 | condition=first-use | complete=yes | receipts=1",
+      "run | set=held-out | runtime=desktop | browser=Firefox | version=145.0 | os=Windows | revision=x | engines=tesseract | warm-runs=3 | condition=first-use | complete=yes | receipts=1",
       "receipt | id=REG100 | engine=tesseract | status=ok | corrections=1 | silent=0 | first-ms=1 | warm-ms=1,1,1 | stable=yes | note=KAYA TOAST 9.00",
-      "receipt | id=REG100 KAYA TOAST | engine=paddle | status=ok | corrections=0 | silent=0 | first-ms=1 | warm-ms=1 | stable=yes",
+      "receipt | id=REG100 KAYA TOAST | engine=tesseract | status=ok | corrections=0 | silent=0 | first-ms=1 | warm-ms=1 | stable=yes",
       "KAYA TOAST SET 2 9.00",
-      "phone | phone=Pixel | engine=paddle | id=REG100 | status=ok | first=cold | first-ms=1 | warm-ms=1 | corrections=- | silent=- | ua=Mozilla/5.0 (Linux; Android 15)",
     ].join("\n");
     const out = combinedBlock(parseSummaries(pasted));
     expect(out).not.toMatch(/KAYA|TOAST|9\.00/);
@@ -395,62 +220,68 @@ describe("summaries: IDs and counts only, and pasting", () => {
 
   it("reports unreadable lines by line number only", () => {
     const parsed = parseSummaries(
-      "receipt | id=REG1 | engine=paddle | status=ok\nrun | set=secret",
+      "receipt | id=REG1 | engine=tesseract | status=ok\nrun | set=secret",
     );
     expect(parsed.problems).toEqual([
       "line 1: unreadable receipt line (no run line above it)",
       "line 2: unreadable run line",
     ]);
   });
+
+  it("treats Paddle lines from before the removal as unreadable, and ignores phone lines", () => {
+    const old = [
+      "run | set=held-out | runtime=desktop | browser=Edge | version=1 | os=Windows | revision=x | engines=tesseract,paddle | warm-runs=3 | condition=first-use | name-match=recognisable-0.70 | complete=yes | receipts=1",
+      "receipt | id=REG100 | engine=paddle | status=ok | corrections=0 | silent=0 | first-ms=1 | warm-ms=1 | stable=yes",
+      "phone | phone=Pixel | engine=paddle | id=REG100 | status=ok | first=cold | first-ms=1 | warm-ms=1 | corrections=- | silent=- | ua=x",
+    ].join("\n");
+    const parsed = parseSummaries(old);
+    expect(parsed.runs).toEqual([]);
+    expect(parsed.problems).toEqual([
+      "line 1: unreadable run line",
+      "line 2: unreadable receipt line (no run line above it)",
+    ]);
+  });
 });
 
 describe("name-match rule in summaries (owner decision, 11 Nov 2026)", () => {
-  const exactRun = (browser: string) => run(browser, 12, 6, 12, { nameMatch: "exact" });
+  const exactRun = (browser: string) => run(browser, 12, 6, { nameMatch: "exact" });
 
   it("writes name-match=recognisable-0.70 on the run line and reads it back", () => {
-    const block = summaryBlock(run("Edge", 2, 1, 1), true);
+    const block = summaryBlock(run("Edge", 2, 1), true);
     expect(block).toMatch(/^run \| .*\| name-match=recognisable-0\.70 \|/m);
     expect(parseSummaries(block).runs[0]!.info.nameMatch).toBe("recognisable-0.70");
   });
 
   it("reads a run line written before the field existed as exact", () => {
     const legacy =
-      "run | set=held-out | runtime=desktop | browser=Firefox | version=145.0 | os=Windows | revision=x | engines=tesseract,paddle | warm-runs=3 | condition=first-use | complete=yes | receipts=1";
+      "run | set=held-out | runtime=desktop | browser=Firefox | version=145.0 | os=Windows | revision=x | engines=tesseract | warm-runs=3 | condition=first-use | complete=yes | receipts=1";
     expect(parseSummaries(legacy).runs[0]!.info.nameMatch).toBe("exact");
   });
 
   it("combines summaries that used the same rule", () => {
     const parsed = parseSummaries(
-      [
-        summaryBlock(run("Edge", 12, 6, 12), true),
-        summaryBlock(run("Firefox", 12, 6, 12), true),
-      ].join("\n"),
-    );
-    expect(nameMatchConflict(parsed.runs, parsed.phones)).toBeNull();
-    expect(combinedBlock(parsed)).toContain(
-      "(b) Paddle within-2 share >= Tesseract + 10 points (held-out): PASS",
-    );
-  });
-
-  it("refuses to combine Edge and Firefox summaries with different rules", () => {
-    const parsed = parseSummaries(
-      [summaryBlock(run("Edge", 12, 6, 12), true), summaryBlock(exactRun("Firefox"), true)].join(
+      [summaryBlock(run("Edge", 12, 6), true), summaryBlock(run("Firefox", 12, 6), true)].join(
         "\n",
       ),
+    );
+    expect(nameMatchConflict(parsed.runs)).toBeNull();
+    expect(combinedBlock(parsed).match(/^engine \|/gm)).toHaveLength(2);
+  });
+
+  it("refuses to combine summaries with different rules", () => {
+    const parsed = parseSummaries(
+      [summaryBlock(run("Edge", 12, 6), true), summaryBlock(exactRun("Firefox"), true)].join("\n"),
     );
     const out = combinedBlock(parsed);
     expect(out).toContain(
       "refused | not combined: summaries used different name-match rules (exact, recognisable-0.70)",
     );
-    expect(out).not.toMatch(/^(run|receipt) \|/m);
-    expect(out).not.toContain("DECISION");
-    // The verdict itself never treats mixed rules as comparable either.
-    expect(rule(verdict(parsed.runs, []), "b")).toBe("pending");
+    expect(out).not.toMatch(/^(run|receipt|engine) \|/m);
   });
 
   it("keeps this browser's own run but refuses a pasted summary with another rule", () => {
     const out = summaryBlock(
-      run("Edge", 12, 6, 12),
+      run("Edge", 12, 6),
       true,
       parseSummaries(summaryBlock(exactRun("Firefox"), true)),
     );
@@ -458,16 +289,6 @@ describe("name-match rule in summaries (owner decision, 11 Nov 2026)", () => {
     expect(out.match(/^run \|/gm)).toHaveLength(1);
     expect(out).toContain("browser=Edge");
     expect(out).not.toContain("browser=Firefox");
-    expect(out).toContain("DECISION: PENDING");
-  });
-
-  it("refuses scored phone lines with another rule, ignores timing-only ones", () => {
-    const edge = run("Edge", 12, 6, 12);
-    const scored = { ...phone("paddle", "REG100", [7000], 1), nameMatch: "exact" };
-    const timingOnly = { ...phone("paddle", "REG100", [7000], null), nameMatch: "exact" };
-    expect(phoneLine(scored)).toContain("| name-match=exact |");
-    expect(nameMatchConflict([edge], parseSummaries(phoneLine(scored)).phones)).not.toBeNull();
-    expect(nameMatchConflict([edge], parseSummaries(phoneLine(timingOnly)).phones)).toBeNull();
   });
 });
 
@@ -480,17 +301,15 @@ describe("photo-condition breakdown", () => {
     expect(cleanTags(null)).toEqual([]);
   });
 
-  it("gives each tag's within-2 count per engine, and survives pasting", () => {
-    const r = run("Edge", 4, 2, 4);
+  it("gives each tag's within-2 count, and survives pasting", () => {
+    const r = run("Edge", 4, 2);
     r.results = r.results.map((x) => ({
       ...x,
       tags: x.id === "REG100" || x.id === "REG102" ? ["dim"] : ["flat"],
     }));
     expect(conditionLines(r)).toEqual([
       "condition | tag=dim | engine=tesseract | within-2=1/2 (50.0%)",
-      "condition | tag=dim | engine=paddle | within-2=2/2 (100.0%)",
       "condition | tag=flat | engine=tesseract | within-2=1/2 (50.0%)",
-      "condition | tag=flat | engine=paddle | within-2=2/2 (100.0%)",
     ]);
     const back = parseSummaries(summaryBlock(r, true)).runs[0]!;
     expect(conditionLines(back)).toEqual(conditionLines(r));

@@ -6,17 +6,17 @@
  * (and its editor preview, which shows the app in an iframe) is unchanged while it stays live.
  *
  * The CSP must still let the on-device OCR run (hard rule 2: recognition stays in the browser).
- * Both engines are self-hosted (Batch 2b): Tesseract's worker, core and language files and Paddle's
- * models and runtime come from the app's own origin, and each engine runs in a same-origin Web
- * Worker (no blob: workers). So no third-party script or connect origin is needed for OCR.
+ * Tesseract is self-hosted (Batch 2b): its worker, core and language files come from the app's own
+ * origin, and it runs in a same-origin Web Worker (no blob: workers). So no third-party script or
+ * connect origin is needed for OCR.
  * See docs/reports/2026-11-cloudflare-deploy.md for why each directive is there.
  */
 
 export const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   // 'unsafe-inline': TanStack Start renders small inline bootstrap scripts whose contents change
-  // per request (no nonce support wired up yet). 'wasm-unsafe-eval': kept for WebAssembly. Both
-  // engines worked without it in Chromium, but that is unverified in Firefox and Safari.
+  // per request (no nonce support wired up yet). 'wasm-unsafe-eval': kept for WebAssembly. Tesseract
+  // worked without it in Chromium, but that is unverified in Firefox and Safari.
   // Never add 'unsafe-eval' here.
   "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
   // OCR workers are started from their same-origin URLs.
