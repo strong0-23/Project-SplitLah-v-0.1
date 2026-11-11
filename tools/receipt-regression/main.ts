@@ -28,6 +28,7 @@ import {
   type ScoredReceipt,
   type SummaryScores,
 } from "./model";
+import { ENGINE_COMPARISON_NAME_MATCH, nameMatchLabel, PARSER_GATE_NAME_MATCH } from "./names";
 import { checkReference, pairFiles, toExpected, UNKNOWN_REFERENCE_CREDIT } from "./owner-reference";
 import { PARSERS } from "./parsers";
 import {
@@ -44,6 +45,7 @@ import {
   describeUserAgent,
   parseSummaries,
   combinedBlock,
+  nameMatchConflict,
   summaryBlock,
   receiptLine,
   type DesktopRun,
@@ -364,6 +366,14 @@ combine.onclick = () => {
     ? summaryBlock(engineRun.run, engineRun.heldOut, parsed)
     : combinedBlock(parsed);
   copy.disabled = !summaryBox.value;
+  const conflict = nameMatchConflict(
+    engineRun ? [engineRun.run, ...parsed.runs] : parsed.runs,
+    parsed.phones,
+  );
+  if (conflict) {
+    status.textContent = `Refused: ${conflict}.`;
+    return;
+  }
   status.textContent = `Combined: ${parsed.runs.length} pasted run(s), ${parsed.phones.length} phone line(s)${parsed.problems.length ? `, ${parsed.problems.length} unreadable line(s)` : ""}.`;
 };
 
@@ -548,7 +558,10 @@ run.onclick = async () => {
         for (const parser of PARSERS) {
           const p = parser as unknown as ParserUnderTest;
           const parsed = p.parse(result.sourceText);
-          const checks = evaluate(c.expected, parsed.receipt, p);
+          // The Batch 1b gate keeps the exact name rule (its definition must not change).
+          const checks = evaluate(c.expected, parsed.receipt, p, {
+            nameMatch: PARSER_GATE_NAME_MATCH,
+          });
           result.parsers.push({
             parser: p.id,
             checks,
@@ -713,6 +726,7 @@ async function runEngines() {
         engines,
         warmRuns,
         heldOut: held,
+        nameMatch: ENGINE_COMPARISON_NAME_MATCH,
         signal,
         now: () => performance.now(),
         onProgress: (text) => (status.textContent = text),
@@ -729,6 +743,7 @@ async function runEngines() {
         revision: revision.value.trim(),
         engines,
         warmRuns,
+        nameMatch: nameMatchLabel(ENGINE_COMPARISON_NAME_MATCH),
         complete: out.complete,
       },
       results: out.results,

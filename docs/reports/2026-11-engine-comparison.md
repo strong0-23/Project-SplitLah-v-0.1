@@ -71,8 +71,22 @@ For one receipt, against the owner's verified reference, counting only fields wh
 | Wrong printed total field | +1 |
 | Calculated total | never: it is derived |
 
-Products are matched with the harness's existing matching, unchanged. This simplifies the owner's
-earlier proof-bound evaluator (approved-comparison-r1) while keeping all of its thresholds.
+Products are matched one-to-one by **recognisable name** (owner decision, 11 Nov 2026, made before
+any held-out run; docs/DECISIONS.md):
+
+- Exact names are paired first (the harness's original rule). Then the remaining products are paired
+  greedily by descending similarity, ties broken by printed order, at a similarity of **0.70 or
+  more**. One app row never pairs with two reference products.
+- Similarity is 1 − Levenshtein distance / the longer length, on normalised names (case-folded,
+  NFKC, punctuation stripped except `&`, whitespace collapsed, one leading quantity token such as
+  `1 ` or `2x` dropped). A leading item code (`M5`, `A12`) is ignored when only one name has it.
+- A misspelled but recognisable name adds **0** corrections; quantity and amount are still checked
+  on the paired product. An unrecognisable name is still missing (+1) plus an extra row (+1).
+- Summaries show the rule on the run line (`name-match=recognisable-0.70`); summaries using
+  different rules are refused when combined. The Batch 1b parser gate keeps the exact rule.
+
+This simplifies the owner's earlier proof-bound evaluator (approved-comparison-r1) while keeping all
+of its thresholds.
 
 - **Within 2:** a receipt needing 2 or fewer actions.
 - **Silent financial error:** a wrong financial field with no warning or flag shown (the Batch 1b
@@ -125,7 +139,8 @@ npm.cmd run receipts:dev
    picker doesn't work, use the "select the files themselves" picker under it.
 3. Engines **Both**, warm re-scans **3**, revision = `git rev-parse --short HEAD`.
 4. Select **Run sequential suite**. Keep the tab in front until it finishes.
-5. Select **Copy summary**.
+5. Select **Copy summary**. Its `run | …` line must show `name-match=recognisable-0.70`; if it
+   doesn't, the checkout predates the name rule (section 3): stop and update it.
 6. In **Firefox**, open the same address and repeat steps 2–4.
 7. In Firefox, paste the Edge summary into "Combine with other browsers and phones" and select
    **Combine**.
@@ -223,7 +238,19 @@ decision), before and after the engine-reuse fix:
 - Most of Paddle's remaining warm time is the orientation probes plus recognition (unchanged by
   design). Phones are usually slower than this desktop, so rule (c) is still a real risk.
 - Paddle misread one synthetic product name, giving 1 missing product and 1 extra row (2 actions,
-  2 silent errors). This shows the scoring working; it is not a result.
+  2 silent errors). This shows the scoring working; it is not a result. It was scored with the
+  earlier exact name rule. Re-run with the recognisable-name rule (below), the same misread name is
+  matched, and the check moves to that product's quantity, which Paddle also misread: 1 action,
+  1 silent error.
+
+**Recognisable-name rule (11 Nov 2026, synthetic data only).**
+
+| Check | Result |
+|---|---|
+| `npm run receipts:test` (harness, 6 files) | 89 passed. New `names.test.ts`: normalisation, typo tolerance with an `M5` item-code prefix, names below 0.70 staying missing + extra, one-to-one pairing and printed-order ties, exact pairs first, and the Batch 1b gate staying exact. `comparison.test.ts`: the `name-match=recognisable-0.70` run-line label, legacy lines read as `exact`, refusal to combine mixed rules (desktop and scored phone lines) |
+| `npx tsc --noEmit`, `npm run receipts:check`, `npx vitest run` (311 passed), `npx eslint src/lib/scan tools/receipt-regression`, `npx vite build` | pass |
+| Harness smoke, headless Chrome 153 (`smoke/engine-smoke.mjs`) | pass; run line shows `name-match=recognisable-0.70`; the parser gate still gives `OVERALL: PASS` |
+| Phone page smoke (`smoke/phone-page-smoke.mjs`) | not re-run for this change (needs a switch-on build under `wrangler dev`) |
 
 ## 8. Not verified, and limitations
 

@@ -50,9 +50,26 @@ number of Review-screen field actions needed to reach a correct bill.
 | The printed total field is wrong | +1 |
 | The calculated total | never (it is derived) |
 
-Products are matched with this harness's existing matching, unchanged (exact name, case and spaces
-ignored, or the name followed by a bracketed note the app added). A missing product is one action:
-its quantity and amount are typed in with it. A receipt "within 2" needs 2 or fewer actions; a
+Products are matched one-to-one by **recognisable name** (owner decision, 11 Nov 2026, made before
+any held-out run; `names.ts`):
+
+1. Exact names are paired first, with the harness's original rule (case and spaces ignored, or the
+   name followed by a bracketed note the app added).
+2. The rest are paired greedily by descending similarity, ties broken by printed order (reference,
+   then app), and only at a similarity of **0.70 or more**. One app row never pairs with two
+   reference products.
+   - Both names are normalised: case-folded, NFKC, punctuation stripped except `&`, whitespace
+     collapsed, and one leading quantity token (`1 `, `2x `) dropped.
+   - Similarity = 1 − Levenshtein distance / the longer name's length.
+   - A leading item code (`M5`, `A12`: one or two letters then digits) is ignored when only one of
+     the two names has one, and kept when both do.
+   - A bracketed note the app added after a name is ignored.
+3. A recognisable but misspelled name adds **0** corrections. An unrecognisable name (below 0.70)
+   is still a missing product (+1) and an extra row (+1).
+4. Quantity, amount, charge and silent-error checks then run on the paired products as before.
+
+A missing product is one action: its quantity and amount are typed in with it. The run line says
+which rule was used (`name-match=recognisable-0.70`); see "Summary format". A receipt "within 2" needs 2 or fewer actions; a
 failed or timed-out scan is never within 2 and stays in the denominator.
 
 This simplifies the owner's earlier proof-bound evaluator (approved-comparison-r1) while keeping all
@@ -128,7 +145,8 @@ npm.cmd run receipts:dev
 3. Engines **Both**, warm re-scans **3**. Revision: the output of `git rev-parse --short HEAD`.
 4. **Run sequential suite** and leave the tab in front until it finishes (about 1 minute per
    receipt on a typical desktop; Paddle takes most of it).
-5. **Copy summary** and keep it.
+5. **Copy summary** and keep it. Its `run | …` line must show `name-match=recognisable-0.70`; if
+   it doesn't, the checkout predates the owner's name rule: stop and update it.
 6. **Firefox**: open the same address in Firefox and repeat steps 2–4.
 7. In Firefox, paste the Edge summary into "Combine with other browsers and phones", add any phone
    result lines, and select **Combine**. Copy the combined summary and send only that block.
@@ -148,7 +166,12 @@ shows no receipt content. Steps are in `docs/reports/2026-11-engine-comparison.m
 ### Summary format
 
 Lines like `run | …`, `receipt | …` and `phone | …` are machine-readable and the only lines read
-back when pasted; everything else (aggregates, verdict) is recomputed. Receipt IDs must look like
+back when pasted; everything else (aggregates, verdict) is recomputed. Run and phone lines carry
+`name-match=` (the item-name rule used for scoring). **Summaries that used different rules are not
+combined:** Combine refuses them (a run made in this page is kept, the pasted ones are left out),
+and a line without the field, written before the rule existed, counts as `exact`. Re-run every
+browser and phone with the same harness revision. Timing-only phone lines (no reference) are not
+scored, so their rule does not matter. Receipt IDs must look like
 `REG001` (letters then digits); a line with anything else in an ID is ignored and reported by line
 number. Per-receipt field detail (`detail | …`) appears only in development runs.
 
@@ -229,7 +252,8 @@ Format and contract: `reference-format/` (blank template, contract, notes).
   (`preparation_extension.rounding`) is known complete, the rework, which splits on the unrounded
   total (D4), is compared with payable − rounding; parser-v2 with the payable.
 - Item names match exactly (case and spaces ignored), or the name followed by a note the app added in
-  brackets, e.g. "DRY MEE POK (MEMBER DISC -1.00)".
+  brackets, e.g. "DRY MEE POK (MEMBER DISC -1.00)". This is the `exact` name rule; the parser gate
+  always uses it, unchanged (the engine comparison's recognisable-name rule does not apply here).
 
 ## What the scores mean
 

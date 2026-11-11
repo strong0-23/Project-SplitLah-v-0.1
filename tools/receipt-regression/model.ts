@@ -8,6 +8,7 @@
  *   the owner's merge rule. Summaries carry receipt IDs and counts only, never receipt content.
  */
 import { z } from "zod";
+import { exactNorm, pairNames, type NameMatch } from "./names";
 
 const cents = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const knownCents = cents.nullish();
@@ -149,12 +150,16 @@ export interface ParserUnderTest<R extends ScoredReceipt = ScoredReceipt> {
 
 /**
  * Scores a parsed receipt against a verified reference. Unknown reference fields never pass.
- * Item names match exactly after case/whitespace normalisation; duplicates match in printed order.
+ * Item names are paired one-to-one by `names.ts`. `nameMatch` defaults to `exact` (case/whitespace
+ * normalisation, duplicates in printed order), the Batch 1b parser gate's unchanged rule; the
+ * Phase 2c engine comparison passes `recognisable` (owner decision, 11 Nov 2026). Quantity, amount
+ * and the other checks then run on the paired items exactly as before.
  */
 export function evaluate<R extends ScoredReceipt>(
   expected: Expected,
   actual: R | null,
   parser: Pick<ParserUnderTest<R>, "computeTotals" | "knownQuantity" | "splitsUnroundedTotal">,
+  options: { nameMatch?: NameMatch } = {},
 ): Check[] {
   /** Which actual item each expected item matched (for the silent-error rule). */
   const matched = new Map<string, number>();
@@ -169,21 +174,24 @@ export function evaluate<R extends ScoredReceipt>(
       actual: got ?? null,
       ...(typeof want === "number" && typeof got === "number" ? { delta: got - want } : {}),
     });
-  const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLocaleLowerCase("en");
+  const norm = exactNorm;
   const unused = new Set((actual?.items ?? []).map((_, i) => i));
   const occurrences = new Map<string, number>();
+  // One-to-one pairing: exact names first (or the name followed by a note the app added in
+  // brackets, "DRY MEE POK (MEMBER DISC -1.00)", D2/D3), then recognisable names if that mode is on.
+  const pairs = pairNames(
+    (expected.items ?? []).map((i) => i.description),
+    (actual?.items ?? []).map((i) => i.description),
+    options.nameMatch ?? "exact",
+  );
   if (expected.items == null) check("items", null, actual?.items.length);
   else
-    for (const item of expected.items) {
+    for (const [at, item] of expected.items.entries()) {
       const name = norm(item.description);
       const occurrence = (occurrences.get(name) ?? 0) + 1;
       occurrences.set(name, occurrence);
       const key = `item:${name}#${occurrence}`;
-      // Exact name first; otherwise the name followed by a note the app added in brackets
-      // ("DRY MEE POK (MEMBER DISC -1.00)", D2/D3 notes).
-      const index =
-        [...unused].find((i) => norm(actual!.items[i]!.description) === name) ??
-        [...unused].find((i) => norm(actual!.items[i]!.description).startsWith(`${name} (`));
+      const index = pairs[at];
       if (index !== undefined) matched.set(key, index);
       const found = index === undefined ? undefined : actual!.items[index];
       if (index !== undefined) unused.delete(index);

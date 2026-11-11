@@ -16,6 +16,7 @@ import type { Receipt } from "../../src/lib/types";
 import { countCorrections, countSilent } from "./corrections";
 import type { EngineId, ReceiptEngineResult } from "./comparison";
 import { evaluate, type Check, type Expected } from "./model";
+import { ENGINE_COMPARISON_NAME_MATCH, type NameMatch } from "./names";
 import { rework } from "./rework-parser";
 
 export interface EngineCase {
@@ -50,6 +51,8 @@ export interface RunOptions {
   engines: readonly EngineId[];
   warmRuns: number;
   heldOut: boolean;
+  /** Item-name rule for scoring. Default: `recognisable` (owner decision, 11 Nov 2026). */
+  nameMatch?: NameMatch;
   signal: AbortSignal;
   now: () => number;
   /** Status text: receipt ID, engine and scan number only. */
@@ -97,7 +100,11 @@ export async function runEngineComparison(
         const first = await scan(engine, c.image, opts.signal);
         result.firstMs = opts.now() - t0;
         firstText = first.receipt.rawOcrText ?? "";
-        const checks = c.expected ? evaluate(c.expected, first.receipt, rework) : [];
+        const checks = c.expected
+          ? evaluate(c.expected, first.receipt, rework, {
+              nameMatch: opts.nameMatch ?? ENGINE_COMPARISON_NAME_MATCH,
+            })
+          : [];
         if (c.expected) {
           result.corrections = countCorrections(checks);
           result.silent = countSilent(checks);

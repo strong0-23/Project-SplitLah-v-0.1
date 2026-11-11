@@ -228,3 +228,32 @@ a user's second scan waited for the engine to start again. Fixing it before the 
 data.
 **Where.** `src/lib/scan/engine-pool.ts`, `scan.ts` (`ScanDeps.pool`), `index.ts` (`scanReceipt`),
 `engine-reuse.test.ts`, `paddle-engine.test.ts`.
+
+### Recognisable item names count as matched (owner decision, 11 Nov 2026, made before any held-out run)
+**Rule.** In the Phase 2c engine comparison, a product whose name OCR misspelled but which is
+clearly the same item counts as matched, with 0 corrections for the name; an unrecognisable name
+still counts as missing + extra. Both names are normalised (case-fold, NFKC, punctuation stripped
+except `&`, whitespace collapsed, one leading quantity token such as `1 ` or `2x` dropped).
+Similarity is the normalised Levenshtein ratio, 1 − distance / max(length); "recognisable" means
+0.70 or more. Pairing stays one-to-one: exact matches (the harness's original rule) are paired
+first, then recognisable ones greedily by descending similarity, ties broken by printed order
+(reference, then app). Quantity, amount, charge and silent-error checks then run on the paired
+items as before. Summaries carry `name-match=recognisable-0.70` on the run line (and on phone
+lines), and summaries scored with different rules are refused when combined; a summary line
+without the field predates the rule and is read as `exact`.
+**Item codes.** A leading item-code token (one or two letters then digits, such as `M5` or `A12`)
+is ignored when only one of the two names has one, and kept when both do. Menus print codes that the
+reference or the OCR reading often leaves out, and a code alone would sink short names ("A12 Tea" vs
+"Tea" is 0.43 with it, 1.0 without); when both sides carry a code, neighbouring codes ("A1 Tea",
+"A2 Tea") stay one edit apart. Matching happens within one receipt, so the risk of pairing two
+different products this way is small.
+**Not changed.** The Batch 1b parser gate (parser-v2 vs rework) keeps the exact rule, as the named
+mode `exact`; its definition is unchanged. The decision rule (a)–(d), the ≤ 2 corrections
+threshold and the 70% stop rule are unchanged.
+**Why.** A misspelled name the user can still recognise needs no Review-screen action, so counting
+it as a missing product plus an extra row (2 actions) overstated the work a scan needs. Fixing the
+rule before any held-out run keeps it from being chosen after seeing results.
+**Where.** `tools/receipt-regression/names.ts` (tested in `names.test.ts`), `model.ts`
+(`evaluate`'s `nameMatch` option, default `exact`), `engine-runner.ts` (default `recognisable`),
+`comparison.ts` (`name-match` field, `nameMatchConflict`), `tools/receipt-regression/README.md`,
+`docs/reports/2026-11-engine-comparison.md`.

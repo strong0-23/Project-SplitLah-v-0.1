@@ -19,6 +19,9 @@
  * - (c) and (d) come from phone results (the dev timing page). (d) compares, per phone, the number
  *   of receipts within 2 corrections, over the same receipts scanned with both engines.
  * - Anything without data is "pending". Only data, never missing data, can produce "pass".
+ * - Every run line names its item-name rule (`name-match=`, names.ts). Summaries scored with
+ *   different rules are never combined: a run line without the field predates the rule and was
+ *   scored `exact`.
  */
 import { MAX_CORRECTIONS, type Corrections } from "./corrections";
 
@@ -61,6 +64,8 @@ export interface RunInfo {
   revision: string;
   engines: EngineId[];
   warmRuns: number;
+  /** Item-name rule used for scoring, as `nameMatchLabel` writes it (e.g. "recognisable-0.70"). */
+  nameMatch: string;
   complete: boolean;
 }
 
@@ -83,6 +88,8 @@ export interface PhoneResult {
   /** Extra corrections; null when no verified reference was chosen. */
   corrections: number | null;
   silent: number | null;
+  /** Item-name rule used for `corrections` (names.ts label); "exact" for lines written before it. */
+  nameMatch?: string | undefined;
   userAgent: string;
 }
 
@@ -177,6 +184,10 @@ export function cleanTags(value: unknown): string[] {
   }
   return [...out].slice(0, 8);
 }
+/** Name-match labels (names.ts `nameMatchLabel`): short lowercase words, digits, dots, dashes. */
+export const cleanNameMatch = (s: string) => (/^[a-z0-9.-]{1,30}$/.test(s) ? s : "");
+/** Summaries written before the `name-match` field existed were scored with the exact rule. */
+export const LEGACY_NAME_MATCH = "exact";
 /** Failure stages are short lowercase words (decode, load, orient, recognize, timeout …). */
 export const cleanStage = (s: string) => (/^[a-z]{1,12}$/.test(s) ? s : "other");
 
@@ -199,6 +210,7 @@ export function runLine(i: RunInfo, receipts: number): string {
     `engines=${i.engines.join(",")}`,
     `warm-runs=${i.warmRuns}`,
     "condition=first-use",
+    `name-match=${cleanNameMatch(i.nameMatch) || "-"}`,
     `complete=${i.complete ? "yes" : "no"}`,
     `receipts=${receipts}`,
   ].join(" | ");
@@ -241,6 +253,7 @@ export function phoneLine(p: PhoneResult): string {
     `median-warm-ms=${ms(median(withFailures(p.warmMs)))}`,
     `corrections=${p.corrections ?? "-"}`,
     `silent=${p.silent ?? "-"}`,
+    `name-match=${cleanNameMatch(p.nameMatch ?? LEGACY_NAME_MATCH) || "-"}`,
     // Last, so it may contain anything but the separators removed by `clean`.
     `ua=${clean(p.userAgent, 300)}`,
   ].join(" | ");
@@ -288,10 +301,12 @@ export function parseSummaries(text: string): Parsed {
       const engines = (f.get("engines") ?? "").split(",").map(engineOf);
       const set = f.get("set");
       const runtime = f.get("runtime");
+      const nameMatch = cleanNameMatch(f.get("name-match") ?? LEGACY_NAME_MATCH);
       if (
         (set !== "held-out" && set !== "development") ||
         (runtime !== "desktop" && runtime !== "mobile") ||
-        engines.some((e) => e === null)
+        engines.some((e) => e === null) ||
+        !nameMatch
       ) {
         out.problems.push(`${where}: unreadable run line`);
         current = null;
@@ -307,6 +322,7 @@ export function parseSummaries(text: string): Parsed {
           revision: clean(f.get("revision") ?? "-", 60),
           engines: engines as EngineId[],
           warmRuns: num(f.get("warm-runs")) ?? 0,
+          nameMatch,
           complete: f.get("complete") === "yes",
         },
         results: [],
@@ -350,7 +366,8 @@ export function parseSummaries(text: string): Parsed {
       const status = f.get("status");
       const uaAt = line.indexOf(" | ua=");
       const pid = f.get("id") === "photo" ? "photo" : cleanId(f.get("id") ?? "");
-      if (!engine || !pid || (status !== "ok" && status !== "failed")) {
+      const nameMatch = cleanNameMatch(f.get("name-match") ?? LEGACY_NAME_MATCH);
+      if (!engine || !pid || !nameMatch || (status !== "ok" && status !== "failed")) {
         out.problems.push(`${where}: unreadable phone line`);
         return;
       }
@@ -366,11 +383,30 @@ export function parseSummaries(text: string): Parsed {
         warmMs: numList(f.get("warm-ms")),
         corrections: num(f.get("corrections")),
         silent: num(f.get("silent")),
+        nameMatch,
         userAgent,
       });
     }
   });
   return out;
+}
+
+/**
+ * Summaries scored with different item-name rules must not be combined. Returns the refusal
+ * reason, or null. Phone lines count only when they carry corrections (timing-only lines are not
+ * scored, so their rule does not matter).
+ */
+export function nameMatchConflict(
+  runs: readonly DesktopRun[],
+  phones: readonly PhoneResult[] = [],
+): string | null {
+  const labels = new Set([
+    ...runs.map((r) => r.info.nameMatch),
+    ...phones.filter((p) => p.corrections !== null).map((p) => p.nameMatch ?? LEGACY_NAME_MATCH),
+  ]);
+  return labels.size > 1
+    ? `summaries used different name-match rules (${[...labels].sort().join(", ")}); re-run them with the same harness revision`
+    : null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -507,6 +543,9 @@ export function desktopRuntimes(runs: readonly DesktopRun[]) {
     const [x, y] = present.map((r) => receiptIds(r).sort().join(","));
     if (x !== y) {
       notes.push("Edge and Firefox ran different receipt sets: desktop rules stay pending");
+      for (const k of chosen.keys()) chosen.set(k, null);
+    } else if (nameMatchConflict(present)) {
+      notes.push("Edge and Firefox used different name-match rules: desktop rules stay pending");
       for (const k of chosen.keys()) chosen.set(k, null);
     }
   }
@@ -717,6 +756,13 @@ export function summaryBlock(
     ...run.results.map(receiptLine),
     ...aggregateLines(run, heldOut),
   ];
+  const conflict = nameMatchConflict([run, ...pasted.runs], pasted.phones);
+  if (conflict) {
+    // This run is kept; the pasted summaries are refused, not combined.
+    lines.push(`refused | pasted summaries not combined: ${conflict}`);
+    lines.push(...verdictLines([run], []));
+    return lines.join("\n");
+  }
   for (const other of pasted.runs) {
     lines.push(runLine(other.info, receiptIds(other).length), ...other.results.map(receiptLine));
   }
@@ -729,6 +775,12 @@ export function summaryBlock(
 /** A combined block from pasted text only (no run in this page). Lines are re-written, not copied. */
 export function combinedBlock(parsed: Parsed): string {
   const lines = [SUMMARY_HEADER];
+  const conflict = nameMatchConflict(parsed.runs, parsed.phones);
+  if (conflict) {
+    lines.push(`refused | not combined: ${conflict}`);
+    lines.push(...parsed.problems.map((p) => `note: pasted text ${p}`));
+    return lines.join("\n");
+  }
   for (const run of parsed.runs)
     lines.push(runLine(run.info, receiptIds(run).length), ...run.results.map(receiptLine));
   lines.push(...parsed.phones.map(phoneLine));
