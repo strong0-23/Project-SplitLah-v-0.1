@@ -1,22 +1,30 @@
 # Phase 2c: Tesseract vs PaddleOCR comparison
 
-**Branch:** `engine-comparison` (from `main` at 50f8866). **Date:** 11 Nov 2026.
-**Status:** tooling ready; **no real-receipt run yet**. Results tables below are empty until the
-owner's run. The held-out run is owner-run and starts only after the owner confirms the
-development references are verified and explicitly authorises it (brief, Phase 2c step 1).
-Tesseract stays the default engine; this report does not change it.
+**Branch:** `engine-comparison` (from `main` at 50f8866), merged; results filled in on
+`cleanup/remove-paddle`. **Dates:** 11 Nov 2026.
+**Status:** **finished.** The held-out run was done by the owner on revision `6dbcd90`. Result:
+**Paddle does not replace Tesseract**, and the 70% stop rule triggered, so engine work stops.
+The owner decided to remove Paddle from the app (done on `cleanup/remove-paddle`). Results are in
+section 6; sections 2–5 describe the method as it was run. The Paddle-specific tooling described
+there (engine "Both" mode, the phone timing page, the preview-build engine switch) no longer
+exists.
 
 ## 1. Summary
 
-- The local harness (`tools/receipt-regression`) now runs both engines through the app's own scan
+- The local harness (`tools/receipt-regression`) ran both engines through the app's own scan
   pipeline on the owner's photos, scores each receipt by **extra correction actions** against the
-  owner's verified references, times first and warm scans, and applies the decision rule.
+  owner's verified references, timed first and warm scans, and applied the decision rule. Since
+  Paddle's removal it scores Tesseract only, with no decision rule.
 - A **held-out mode** keeps everything to receipt IDs, counts and timings.
-- A dev-only **phone timing page** (`/dev/engine-timing`) exists only in builds with the engine
-  switch on (preview builds), never on `main`.
-- Edge and Firefox summaries, and phone result lines, combine into one verdict.
-- Sample: about 12 held-out receipts (owner decision, 11 Nov 2026). At n = 12 one receipt is about
-  8 percentage points, so every share is shown as a count (x/12) as well as a percentage.
+- A dev-only **phone timing page** (`/dev/engine-timing`) existed in builds with the engine switch
+  on (preview builds); it was never used (6.4) and was removed with Paddle.
+- Edge and Firefox summaries, and phone result lines, combined into one verdict.
+- Sample: planned at about 12 held-out receipts (owner decision, 11 Nov 2026); the run used **7**.
+  At n = 7 one receipt is about 14.3 percentage points, so every share is shown as a count (x/7)
+  as well as a percentage.
+- **Result (section 6):** both engines 0/7 within 2 corrections in Edge and Firefox; Paddle 7
+  silent errors per browser (Tesseract 3). Paddle does not replace Tesseract; engine work stops;
+  Paddle was removed.
 
 ## 2. Method
 
@@ -162,57 +170,99 @@ npm.cmd run receipts:dev
 8. Paste all phone lines into the Combine box together with the desktop summaries, select
    **Combine**, and send only the combined block.
 
-## 6. Results (to be filled from the owner's summary)
+## 6. Results (owner's held-out run, 11 Nov 2026)
 
-### 6.1 Desktop, held-out set (n = ___)
+**Setup of the run.** Revision `6dbcd90` (`main`). Edge 157 and Firefox 152 on the owner's PC.
+**7 held-out receipts** (fewer than the planned ~12), first use (no saved preferences), item-name
+rule `name-match=recognisable-0.70`, 3 warm re-scans. The owner returned aggregate scores only.
 
-| Browser (version) | Engine | Within 2 (x/n, %) | Silent errors | Failed / timed out | Session-cold | Median warm |
-|---|---|---|---|---|---|---|
-| Edge | Tesseract | | | | | |
-| Edge | Paddle | | | | | |
-| Firefox | Tesseract | | | | | |
-| Firefox | Paddle | | | | | |
+**Sample size.** At n = 7, **one receipt is about 14.3 percentage points**, so every share below is
+shown as a count first. A 70% share needs 5 of 7 receipts (71.4%); rule (b)'s +10 points needs at
+least 1 more receipt than Tesseract.
 
-### 6.2 Correction actions by field (held-out, totals)
+### 6.1 Desktop, held-out set (n = 7)
 
-| Browser | Engine | Missing | Extra | Quantity | Amount | Charges | Printed total |
-|---|---|---|---|---|---|---|---|
-| Edge | Tesseract | | | | | | |
-| Edge | Paddle | | | | | | |
-| Firefox | Tesseract | | | | | | |
-| Firefox | Paddle | | | | | | |
-
-### 6.3 By photo condition (held-out, within 2, x/n)
-
-| Condition tag | Edge Tesseract | Edge Paddle | Firefox Tesseract | Firefox Paddle |
+| Browser | Engine | Within 2 (x/n, %) | Silent errors | Median warm |
 |---|---|---|---|---|
-| | | | | |
+| Edge 157 | Tesseract | 0/7 (0.0%) | 3 | 5.8 s |
+| Edge 157 | Paddle | 0/7 (0.0%) | 7 | 12.5 s |
+| Firefox 152 | Tesseract | 0/7 (0.0%) | 3 | 5.8 s |
+| Firefox 152 | Paddle | 0/7 (0.0%) | 7 | 13.2 s |
+
+Failed/timed-out scans, session-cold times and unstable re-reads were not part of the figures the
+owner reported, so they are not shown here.
+
+### 6.2 Correction actions by field (held-out, totals over the 7 receipts)
+
+As reported by the owner, Edge / Firefox:
+
+| Field | Tesseract (Edge / Firefox) | Paddle (Edge / Firefox) |
+|---|---|---|
+| Extra product rows | 15 / 28 | 24 / 23 |
+| Charge fields | 11 / 11 | 10 / 8 |
+| Printed total | 5 / 5 | 5 / 5 |
+| Missing products | 6 / 8 | 5 / 4 |
+| Quantity, line amount | not reported | not reported |
+
+Extra rows are the largest source for both engines, then charges. The printed total was wrong on
+5 of 7 receipts for both engines in both browsers. That both engines miss in the same places
+suggests much of the error comes from how the shared parser reads unfamiliar receipt layouts
+rather than from character recognition alone; the per-receipt data that would confirm this was not
+returned (held-out mode).
+
+### 6.3 By photo condition
+
+Not reported (aggregates only); at n = 7 a per-tag breakdown would have 1–3 receipts per tag.
 
 ### 6.4 Phones
 
-| Phone (label, browser) | Engine | Receipts | Cold first scan | Median warm (pooled) | Within 2 (x/n) | Silent errors |
-|---|---|---|---|---|---|---|
-| | Tesseract | | | | | |
-| | Paddle | | | | | |
+**Not run.** Rules (c) and (d) were not tested because Paddle had already failed rules (a) and (b)
+on desktop; a phone result could not change the decision.
 
 ### 6.5 Decision-rule outcome
 
 | Rule | Outcome | Detail |
 |---|---|---|
-| (a) zero silent financial errors | pending | |
-| (b) +10 points within 2 (held-out) | pending | |
-| (c) median warm phone scan ≤ 8 s | pending | |
-| (d) Paddle correctness ≥ Tesseract per phone | pending | |
-| 70% stop rule | pending | |
-| **Decision** | **pending** | |
+| (a) zero silent financial errors (Paddle) | **FAIL** | Paddle 7 silent errors in Edge and 7 in Firefox (Tesseract: 3 and 3) |
+| (b) +10 points within 2 (held-out) | **FAIL** | Edge: Paddle 0/7 vs Tesseract 0/7, +0.0 points; Firefox: 0/7 vs 0/7, +0.0 points |
+| (c) median warm phone scan ≤ 8 s | **not run** | Paddle had already failed (a) and (b). For reference, Paddle's desktop warm medians were 12.5 s and 13.2 s |
+| (d) Paddle correctness ≥ Tesseract per phone | **not run** | Same reason |
+| 70% stop rule | **STOP ENGINE WORK** | Neither engine reaches 70% (5/7) in either browser: both are 0/7 |
+| **Decision** | **FAIL: Paddle does not replace Tesseract** | |
 
-### 6.6 Recommendation
+### 6.6 Development vs held-out
 
-Pending the owner's results. Per the brief, a device-based fallback (Paddle on capable phones,
-Tesseract otherwise) is proposed only if Paddle passes on accuracy but fails on speed on some
-phones.
+The development receipts scored **40–60% within 2 corrections**; the held-out receipts scored
+**0%** with both engines. A drop that large points to **overfitting to the familiar receipts**:
+the parser rules ported and fixed in Batches 1b and 2a were checked against the development set,
+and they do not carry over to unfamiliar layouts. This affects both engines equally, because both
+feed the same parser.
 
-## 7. Tooling verification (synthetic data only, 11 Nov 2026)
+### 6.7 Caveats
+
+- **Small sample.** n = 7 (one receipt ≈ 14.3 points). The decision does not hinge on it: Paddle
+  failed rule (a) by 7 silent errors per browser, and both engines were 0/7 within 2.
+- **The held-out set was seen by the coordinator.** Claude drafted the held-out references from
+  the owner's photos, and the owner checked them. So the held-out receipts were not unseen by the
+  project's coordinator. Nothing from them went into any code brief before this run, and no code
+  was changed using them, so the run still measured code that had not been tuned on them. The next
+  held-out set will have references written by the owner (6.8).
+
+### 6.8 Decision and follow-up (owner, 11 Nov 2026)
+
+1. **Paddle does not replace Tesseract.** Tesseract stays the only engine.
+2. **Paddle is removed from the app** (`cleanup/remove-paddle`): adapter, worker, models, packages,
+   the dev engine switch and the phone timing page. The `OcrEngine` interface, engine pool and
+   engine injection stay, so an engine could be added later.
+3. **Engine work stops** (70% stop rule).
+4. **The 7 held-out receipts become development receipts**, giving 12 development receipts. They
+   may now be used for development like the others.
+5. **A fresh held-out set** will be collected later, with references written by the owner.
+
+The device-based fallback in the brief (Paddle on capable phones) does not apply: Paddle failed on
+accuracy, not only on speed.
+
+## 7. Tooling verification before the run (synthetic data only, 11 Nov 2026)
 
 | Check | Result |
 |---|---|
@@ -254,21 +304,47 @@ decision), before and after the engine-reuse fix:
 
 ## 8. Not verified, and limitations
 
-- **No real receipts** were used; accuracy on real photos is unmeasured until the owner's run.
-- **Firefox was not tested here.** It couldn't be installed in this environment (Playwright's
-  Firefox download, Mozilla's package host and the Debian mirror are all blocked). The harness uses
-  no Chrome-only API and has fallbacks, but the owner's Firefox preflight is the first real check.
-- **Edge and Safari** were not tested; no **real phone** was tested (phone emulation in desktop
-  Chrome only).
-- **No real Cloudflare preview build** was tested; it was checked with `wrangler dev` locally.
-- **Sample size:** 12 held-out receipts give low statistical confidence; one receipt is about 8
-  points.
-- The engines' own runtime warnings (ONNX Runtime) still appear in the browser's DevTools console;
-  they contain no receipt content.
+- **Phones** were not tested (rules (c) and (d) not run; see 6.4).
+- **Safari** was not tested.
+- Only aggregate figures were returned; per-receipt and per-condition results are not available
+  (by design for a held-out run).
+- **Sample size:** 7 held-out receipts; one receipt is about 14.3 points.
+- The tooling checks in section 7 used synthetic receipts only; the agent never saw the held-out
+  results beyond the aggregates in section 6.
 
 ## 9. For the owner
 
-1. **Settled (11 Nov 2026):** the rule application in section 4 is accepted; at least 4 receipts
-   per phone; engine reuse fixed before any run (section 2).
-2. Name the phones to test.
-3. Authorise the held-out run once the development references are verified (brief gate).
+1. **Done (11 Nov 2026):** verdict recorded, Paddle removed, held-out receipts reclassified as
+   development, engine work stopped (docs/DECISIONS.md).
+2. The Cloudflare build variable `VITE_SPLITLAH_ENGINE_SWITCH`, if you added it, can be deleted
+   (docs/DEPLOY.md).
+3. Next: collect a fresh held-out set and write its references yourself before any new run. The
+   harness (`npm run receipts:dev`, source "Engine scoring") still scores Tesseract on it.
+
+## 10. Paddle removal: what it saves (measured 11 Nov 2026)
+
+Before: `main` at `6dbcd90`. After: `cleanup/remove-paddle`. Each measured in a fresh clone with
+`bun install --frozen-lockfile` (Bun 1.4.4, Linux x64) from an empty cache, then `npm run build`
+and `npx wrangler@4.154.0 deploy --dry-run --config cloudflare/wrangler.jsonc`.
+
+| | Before | After | Saved |
+|---|---:|---:|---:|
+| Packages in `bun.lock` | 636 | 617 | 19 (2 direct + 17 transitive) |
+| Packages installed | 553 | 534 | 19 |
+| Direct dependencies (`dependencies`) | 55 | 53 | 2 |
+| `node_modules` (apparent size) | 495,463,771 B | 361,489,655 B | 133,974,116 B (27%) |
+| `node_modules` (on disk, `du -h`) | 582 MiB | 451 MiB | 131 MiB |
+| Checkout without `node_modules`, `.git`, `.output` | 33,866,289 B | 12,236,499 B | 21,629,790 B (model archives 21,546,025 B) |
+| Production static assets (`.output/public`) | 11,613,801 B, 19 files | 11,612,303 B, 15 files | 1,498 B |
+| Worker (`.output/server`) | 1,780,679 B | 1,776,682 B | 3,997 B |
+| Wrangler upload (Worker) | 1,738.60 KiB, gzip 388.54 KiB | 1,734.69 KiB, gzip 387.69 KiB | 3.91 KiB, gzip 0.85 KiB |
+| Preview build with `VITE_SPLITLAH_ENGINE_SWITCH=on` | 66,283,118 B static | 11,612,303 B (the variable is ignored) | 54,670,815 B |
+
+- Production builds already contained no Paddle files, so the deployed app is essentially
+  unchanged: the small saving is the dev-page guard and route, and the client JS is now split into
+  4 chunks instead of 8 (538,355 B of JS instead of 539,853 B).
+- The large savings are in installs (about 134 MB less in `node_modules`, mostly
+  `onnxruntime-web` 94.0 MB, `@paddleocr/paddleocr-js` 23.8 MB and `@techstark/opencv-js` 11.8 MB),
+  in the checkout (21.5 MB of model archives), and in preview builds with the switch on.
+- Git history still holds the model archives (removing them from history would rewrite pushed
+  history, which is not allowed), so a fresh `git clone` downloads the same pack as before.
