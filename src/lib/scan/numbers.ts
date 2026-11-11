@@ -130,7 +130,13 @@ const toCents = (whole: string, frac: string, fmt: NumberFormat): number | null 
 /** All money amounts on a line, left to right. */
 export function findAmounts(line: string, fmt: NumberFormat = DEFAULT_FORMAT): Amount[] {
   const out: Amount[] = [];
-  const l = fixOcrDigits(line);
+  // On a dot-decimal receipt, "14,60" (a comma and exactly two digits) can't be a thousands group:
+  // OCR misread the decimal point. Same length, so positions hold; marked as repaired (D8).
+  const fixed = fixOcrDigits(line);
+  const l =
+    fmt.decimal === "." && fmt.minorDigits === 2
+      ? fixed.replace(/(?<![\d.,])(\d{1,7}),(\d{2})(?![.,]?\d)/g, "$1.$2")
+      : fixed;
   for (const m of l.matchAll(amountRegex(fmt))) {
     const cents = toCents(m[4] ?? "", m[5] ?? "", fmt);
     if (cents === null) continue;

@@ -78,7 +78,7 @@ const R: Array<[LineKind, RegExp]> = [
   [
     "total",
     new RegExp(
-      String.raw`^(?:grand\s*total|total(?:\s*(?:amount|amt|due|payable|sale|bill|incl(?:uding|\.)?\s*(?:gst|vat|tax)))?|nett?\s*(?:amount|total)|amount(?:\s*(?:due|payable|to\s*pay))?|to\s*pay|balance\s*due|bill\s*total|jumlah(?:\s*(?:besar|bersih|bayar|keseluruhan))?|total\s*bayar|summe|gesamt(?:summe|betrag)?|montant(?:\s*total)?|total\s*(?:à|a)\s*payer|totale|importe|te\s*betalen|totaal)${END}`,
+      String.raw`^(?:grand\s*total|total(?:\s*(?:amount|amt|due|payable|sale|bill|inc(?:l(?:uding|usive)?)?\.?\s*(?:of\s*)?(?:gst|vat|tax)))?|nett?\s*(?:amount|total)|amount(?:\s*(?:due|payable|to\s*pay))?|to\s*pay|balance\s*due|bill\s*total|jumlah(?:\s*(?:besar|bersih|bayar|keseluruhan))?|total\s*bayar|summe|gesamt(?:summe|betrag)?|montant(?:\s*total)?|total\s*(?:à|a)\s*payer|totale|importe|te\s*betalen|totaal)${END}`,
       "i",
     ),
   ],
@@ -90,6 +90,12 @@ const R: Array<[LineKind, RegExp]> = [
   [
     "noise",
     /^(?:tel|phone|fax|hp|date|time|trans(?:action)?\.?\s*(?:no|#|date|time|id|ref|type)|txn|appr(?:oval)?\.?\s*(?:no|code)|auth(?:orisation|orization)?\.?\s*(?:no|code)|rrn|stan|entry\s*mode|aid|tvr|tsi|receipt\s*(?:no|#)|invoice\s*(?:no|#)|inv\s*no|order\s*(?:no|#)|bill\s*(?:no|number|#)|chk|check\s*#|table|tbl|pos|terminal|cashier|server|waiter|staff|gst\s*reg|uen|npwp|co\.?\s*reg|reg\s*no|abn|vat\s*(?:no|reg|id)|ust[\s-]*id|tax\s*id|member\s*(?:no|id)|card\s*no|ref|trace|batch|mid|tid|thank|www\.|http|page)\b/i,
+  ],
+  // Card-terminal, approval and receipt-admin blocks (never items). Separate from the entry above
+  // because these forms end in "#" or ":" rather than at a word boundary.
+  [
+    "noise",
+    /^(?:approval|cardholder|arqc|acquirer)\b|^(?:appr\.?|ref|reference|rec(?:eipt)?\.?|slip|shift|sale|card)\s*(?:no\b|num(?:ber)?\b|#|:)|^(?:station|device|register|till|lane|pos|terminal|batch|trace)\s*(?:id\b|no\b|#|:)|^(?:merchant|customer|store|cardholder)\s*copy\b|^(?:no\s*)?sign(?:ature)?\s*(?:here|below|required|not\s*required)\b|^(?:tc|aid|tvr|tsi|atc|iad|app\s*label|application\s*label)\s*[:#]|^order\s*type\b/i,
   ],
 ];
 
@@ -162,7 +168,11 @@ function totalCore(label: string): string {
   return label
     .replace(/^\d{1,3}\s+(?=\D)/, "")
     .replace(/[()[\]©|]/g, " ")
-    .replace(/\b(?:incl(?:uding|usive|uded)?|inkl)\.?\s*(?:of\s*)?(?:gst|vat|tax|mwst)\b/gi, " ")
+    .replace(
+      /\b(?:inc(?:l(?:uding|usive|uded)?)?|inkl)\.?\s*(?:of\s*)?(?:gst|vat|tax|mwst)\b/gi,
+      " ",
+    )
+    .replace(/\b\d{1,3}\s*(?:items?|pcs|pieces|qty)\b/gi, " ")
     .replace(/\b(?:sgd|s\s*\$|s)\b|\$/gi, " ")
     .replace(/[:;=]/g, " ")
     .replace(/\s+/g, " ")
@@ -242,7 +252,7 @@ export const ITEM_HEADER =
 
 /** "Prices include GST", "GST inclusive", "incl. 19% MwSt". */
 export const INCLUSIVE_NOTE =
-  /\b(?:incl(?:usive|udes?|uded|\.)?|inkl\.?|termasuk|ttc)\b.*\b(?:gst|vat|tax|sst|mwst|tva|iva|btw|ppn|pb1|cukai|pajak)\b|\b(?:gst|vat|tax|sst|mwst|tva|iva|btw)\b.*\b(?:incl(?:usive|uded|\.)?|inkl\.?|included)\b/i;
+  /\b(?:incl(?:usive|udes?|uded|\.)?|inkl\.?|termasuk|ttc)\b.*\b(?:gst|vat|tax|sst|mwst|tva|iva|btw|ppn|pb1|cukai|pajak)\b|\binc\.?\s*(?:of\s*)?(?:gst|vat|tax)\b|\b(?:gst|vat|tax|sst|mwst|tva|iva|btw)\b.*\b(?:incl(?:usive|uded|\.)?|inkl\.?|included)\b/i;
 
 /** Per-item tax markers after a product name: "NAAN(GST*)", "(T)", "(SR)". OCR turns "*" into #,+,x,¥,%. */
 export const ITEM_TAX_MARKER =
@@ -300,4 +310,30 @@ export function mixedTaxBasis(lines: readonly string[]): boolean {
     (has(/\bunit\b.*\bexcl/i) && has(/\b(?:amount|total)\b.*\bincl/i)) ||
     (has(/\bunit\b.*\bincl/i) && has(/\b(?:amount|total)\b.*\bexcl/i))
   );
+}
+
+/**
+ * A tax-table heading with no amounts: rate/net/tax/gross columns ("Tax  Net  Tax  Gross",
+ * "GST Rate  Excl.  GST  Incl."). The rows under it print net + tax = gross.
+ */
+export const TAX_TABLE_HEADER =
+  /\b(?:net|nett|excl(?:\.|uding|usive)?|before\s*tax)\b.*\b(?:tax|gst|vat|sst|mwst|tva|iva|btw)\b.*\b(?:gross|incl(?:\.|uding|usive)?|brutto|ttc)\b/i;
+
+/** Payment-line labels that give money back ("Change 7.20"), and cash tenders. */
+export const CHANGE_LABEL =
+  /^(?:change|change\s*due|kembali(?:an)?|baki|rückgeld|wechselgeld|rendu|cambio|resto|vuelto)\b/i;
+export const CASH_LABEL = /^(?:cash|tunai|bar\b|espèces|efectivo|contanti|contant)/i;
+
+/**
+ * How strongly a total label says "this is what was paid": 3 for grand/payable/incl.-tax totals,
+ * 2 for a plain "Total", 1 for weaker words ("Amount", "Jumlah", "Nett amount").
+ */
+export function totalLabelStrength(words: string): number {
+  if (
+    /\b(?:grand\s*total|total\s*(?:due|payable|to\s*pay|bill)|amount\s*(?:due|payable)|balance\s*due|inc(?:l(?:uding|usive)?)?\.?\s*(?:of\s*)?(?:gst|vat|tax))\b/i.test(
+      words,
+    )
+  )
+    return 3;
+  return /\btotal\b/i.test(words) ? 2 : 1;
 }

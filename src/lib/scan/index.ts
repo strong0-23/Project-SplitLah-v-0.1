@@ -10,7 +10,10 @@
  *   lexicon.ts          pure: receipt vocabulary and label classification
  *   items.ts            pure: item-row shapes (qty/unit/total, weighed goods)
  *   reconcile.ts        pure: tax inclusive/exclusive, consistency score
+ *   totals.ts           pure: total evidence (payment agreement, section totals, tax tables)
+ *   anchor.ts           pure: total-anchored item selection (which rows add up to the total)
  *   parse.ts            pure: lines → draft Receipt
+ *   review.ts           pure: review hints (set-aside lines, row reasons) from the stored OCR text
  *   scan.ts             workflow: image → engine → rows, cancellable and time-bounded
  *   engine-pool.ts      keeps a loaded engine between scans in a page session (idle timeout)
  */
@@ -34,8 +37,12 @@ export {
   parseReceiptText,
   scoreParse,
   isConsistent,
+  REASON,
   type ParseResult,
+  type SetAsideRow,
 } from "./parse";
+export { reviewHints, rowKey, type ReviewHints } from "./review";
+export { anchorItems, type AnchorInput, type AnchorOutcome, type AnchorRow } from "./anchor";
 export { runOcr, LOAD_TIMEOUT_MS, SCAN_TIMEOUT_MS, type OcrProgress, type OcrResult } from "./scan";
 export { createTesseractEngine } from "./tesseract-engine";
 export { ENGINE_IDLE_MS, EnginePool, sharedEnginePool } from "./engine-pool";
