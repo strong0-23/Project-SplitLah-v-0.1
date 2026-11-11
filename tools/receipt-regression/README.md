@@ -130,7 +130,7 @@ From the repository root:
 
 ```powershell
 git fetch origin
-git switch engine-comparison
+git switch main
 git pull
 npm.cmd install
 npm.cmd run receipts:test

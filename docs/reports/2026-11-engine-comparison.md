@@ -126,7 +126,7 @@ fixes, at most three candidate configurations per engine after the baseline.
 
 ```powershell
 git fetch origin
-git switch engine-comparison
+git switch main
 git pull
 npm.cmd install
 npm.cmd run receipts:test
