@@ -81,7 +81,10 @@ function cases(): EngineCase[] {
   });
 }
 
-/** REG901 reads correctly; REG902 misreads one name (Paddle only); REG903 fails to load (Paddle). */
+/**
+ * REG901 reads correctly; REG902 misreads one name (Paddle only: recognisable, so matched by
+ * default and missing + extra under `exact`); REG903 fails to load (Paddle).
+ */
 const fakeScan: ScanFn = async (engine, image) => {
   const id = image.name.slice(0, 6);
   if (engine === "paddle" && id === "REG903")
@@ -136,6 +139,7 @@ async function heldOutRun() {
       revision: "test",
       engines: ["tesseract", "paddle"],
       warmRuns: 3,
+      nameMatch: "recognisable-0.70",
       complete: out.complete,
     },
     results: out.results,
@@ -165,6 +169,7 @@ describe("held-out mode: no reference values anywhere", () => {
       engines: ["tesseract", "paddle"],
       warmRuns: 0,
       heldOut: false,
+      nameMatch: "exact", // so the misread name shows up as missing + extra in the detail line
       signal: new AbortController().signal,
       now,
     });
@@ -179,11 +184,13 @@ describe("held-out mode: no reference values anywhere", () => {
         revision: "t",
         engines: ["tesseract", "paddle"],
         warmRuns: 0,
+        nameMatch: "exact",
         complete: true,
       },
       results: out.results,
     };
     const summary = summaryBlock(run, false);
+    expect(summary).toContain("name-match=exact");
     expect(summary).toContain("detail | id=REG902 | engine=paddle | missing=1 | extra=1");
     expectNoReferenceValues(summary);
     for (const s of spies) expect(s).not.toHaveBeenCalled();
@@ -203,7 +210,8 @@ describe("runner: scoring, timing and failures", () => {
       warmMs: [1000, 1000, 1000],
       stable: true,
     });
-    expect(get("REG902", "paddle").corrections).toMatchObject({ missing: 1, extra: 1, total: 2 });
+    // A recognisable misspelling is matched with 0 corrections (owner decision, 11 Nov 2026).
+    expect(get("REG902", "paddle").corrections).toMatchObject({ missing: 0, extra: 0, total: 0 });
     expect(get("REG903", "paddle")).toMatchObject({
       status: "failed",
       stage: "load",

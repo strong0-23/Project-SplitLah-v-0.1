@@ -9,6 +9,7 @@ import {
   combinedBlock,
   describeUserAgent,
   median,
+  nameMatchConflict,
   parseSummaries,
   phoneLine,
   summaryBlock,
@@ -91,6 +92,7 @@ function run(
       revision: "abc1234",
       engines: ["tesseract", "paddle"],
       warmRuns: 3,
+      nameMatch: "recognisable-0.70",
       complete: true,
       ...over,
     },
@@ -399,6 +401,73 @@ describe("summaries: IDs and counts only, and pasting", () => {
       "line 1: unreadable receipt line (no run line above it)",
       "line 2: unreadable run line",
     ]);
+  });
+});
+
+describe("name-match rule in summaries (owner decision, 11 Nov 2026)", () => {
+  const exactRun = (browser: string) => run(browser, 12, 6, 12, { nameMatch: "exact" });
+
+  it("writes name-match=recognisable-0.70 on the run line and reads it back", () => {
+    const block = summaryBlock(run("Edge", 2, 1, 1), true);
+    expect(block).toMatch(/^run \| .*\| name-match=recognisable-0\.70 \|/m);
+    expect(parseSummaries(block).runs[0]!.info.nameMatch).toBe("recognisable-0.70");
+  });
+
+  it("reads a run line written before the field existed as exact", () => {
+    const legacy =
+      "run | set=held-out | runtime=desktop | browser=Firefox | version=145.0 | os=Windows | revision=x | engines=tesseract,paddle | warm-runs=3 | condition=first-use | complete=yes | receipts=1";
+    expect(parseSummaries(legacy).runs[0]!.info.nameMatch).toBe("exact");
+  });
+
+  it("combines summaries that used the same rule", () => {
+    const parsed = parseSummaries(
+      [
+        summaryBlock(run("Edge", 12, 6, 12), true),
+        summaryBlock(run("Firefox", 12, 6, 12), true),
+      ].join("\n"),
+    );
+    expect(nameMatchConflict(parsed.runs, parsed.phones)).toBeNull();
+    expect(combinedBlock(parsed)).toContain(
+      "(b) Paddle within-2 share >= Tesseract + 10 points (held-out): PASS",
+    );
+  });
+
+  it("refuses to combine Edge and Firefox summaries with different rules", () => {
+    const parsed = parseSummaries(
+      [summaryBlock(run("Edge", 12, 6, 12), true), summaryBlock(exactRun("Firefox"), true)].join(
+        "\n",
+      ),
+    );
+    const out = combinedBlock(parsed);
+    expect(out).toContain(
+      "refused | not combined: summaries used different name-match rules (exact, recognisable-0.70)",
+    );
+    expect(out).not.toMatch(/^(run|receipt) \|/m);
+    expect(out).not.toContain("DECISION");
+    // The verdict itself never treats mixed rules as comparable either.
+    expect(rule(verdict(parsed.runs, []), "b")).toBe("pending");
+  });
+
+  it("keeps this browser's own run but refuses a pasted summary with another rule", () => {
+    const out = summaryBlock(
+      run("Edge", 12, 6, 12),
+      true,
+      parseSummaries(summaryBlock(exactRun("Firefox"), true)),
+    );
+    expect(out).toContain("refused | pasted summaries not combined");
+    expect(out.match(/^run \|/gm)).toHaveLength(1);
+    expect(out).toContain("browser=Edge");
+    expect(out).not.toContain("browser=Firefox");
+    expect(out).toContain("DECISION: PENDING");
+  });
+
+  it("refuses scored phone lines with another rule, ignores timing-only ones", () => {
+    const edge = run("Edge", 12, 6, 12);
+    const scored = { ...phone("paddle", "REG100", [7000], 1), nameMatch: "exact" };
+    const timingOnly = { ...phone("paddle", "REG100", [7000], null), nameMatch: "exact" };
+    expect(phoneLine(scored)).toContain("| name-match=exact |");
+    expect(nameMatchConflict([edge], parseSummaries(phoneLine(scored)).phones)).not.toBeNull();
+    expect(nameMatchConflict([edge], parseSummaries(phoneLine(timingOnly)).phones)).toBeNull();
   });
 });
 

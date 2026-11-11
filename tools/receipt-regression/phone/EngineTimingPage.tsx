@@ -30,6 +30,7 @@ import {
 } from "../comparison";
 import { runEngineComparison } from "../engine-runner";
 import type { Expected } from "../model";
+import { ENGINE_COMPARISON_NAME_MATCH, nameMatchLabel } from "../names";
 import { checkReference, PHOTO_FILE, REFERENCE_FILE, toExpected } from "../owner-reference";
 
 const WARM_RUNS = 3;
@@ -103,6 +104,7 @@ export function EngineTimingPage() {
           engines: [engine],
           warmRuns: WARM_RUNS,
           heldOut: true,
+          nameMatch: ENGINE_COMPARISON_NAME_MATCH,
           signal: new AbortController().signal,
           now: () => performance.now(),
           onProgress: (text) => setProgress(text.replace(/^[^:]*: /, "")),
@@ -121,6 +123,7 @@ export function EngineTimingPage() {
         warmMs: r.warmMs,
         corrections: r.corrections?.total ?? null,
         silent: r.silent,
+        nameMatch: nameMatchLabel(ENGINE_COMPARISON_NAME_MATCH),
         userAgent: navigator.userAgent,
       });
       setProgress(r.status === "ok" ? "Done." : `The scan failed at: ${r.stage ?? "unknown"}.`);
