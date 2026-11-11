@@ -1,10 +1,11 @@
-import { useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Plus, Trash2, Undo2 } from "lucide-react";
 import { sanitizeText, useBill } from "@/hooks/use-bill";
 import { computeTotals } from "@/lib/bill";
+import { newId } from "@/lib/ids";
 import { formatMoney, formatRate, MAX_QUANTITY, parseRate } from "@/lib/money";
-import { hasFoldedFees } from "@/lib/scan";
-import type { ReceiptItem } from "@/lib/types";
+import { hasFoldedFees, reviewHints, rowKey } from "@/lib/scan";
+import type { ItemAssignment, ReceiptItem } from "@/lib/types";
 import { Button, Card, Label, MoneyInput, Notice, Segmented, Toggle } from "./ui";
 import { Shell } from "./Shell";
 
@@ -80,8 +81,19 @@ function RateInput({
   );
 }
 
-function ItemRow({ item, index }: { item: ReceiptItem; index: number }) {
-  const { updateItem, removeItem } = useBill();
+function ItemRow({
+  item,
+  index,
+  reason,
+  onRemove,
+}: {
+  item: ReceiptItem;
+  index: number;
+  reason: string | undefined;
+  onRemove: () => void;
+}) {
+  const { updateItem } = useBill();
+  const why = item.flagged ? (reason ?? "Check this line") : null;
   return (
     <li
       className={`rounded-lg border p-3 ${item.flagged ? "border-accent bg-warning/40" : "border-border"}`}
@@ -102,6 +114,7 @@ function ItemRow({ item, index }: { item: ReceiptItem; index: number }) {
             value={item.description}
             maxLength={80}
             placeholder="e.g. Chicken rice"
+            aria-describedby={why ? `why-${item.id}` : undefined}
             onChange={(e) => updateItem(item.id, { description: sanitizeText(e.target.value, 80) })}
           />
         </div>
@@ -109,11 +122,16 @@ function ItemRow({ item, index }: { item: ReceiptItem; index: number }) {
           variant="danger"
           size="icon"
           aria-label={`Delete item ${index + 1}`}
-          onClick={() => removeItem(item.id)}
+          onClick={onRemove}
         >
           <Trash2 className="h-5 w-5" />
         </Button>
       </div>
+      {why && (
+        <p id={`why-${item.id}`} className="mt-1 text-xs text-warning-foreground">
+          {why}
+        </p>
+      )}
       <div className="mt-2 grid grid-cols-[5rem_1fr] gap-2">
         <QtyInput
           id={`qty-${item.id}`}
@@ -132,9 +150,62 @@ function ItemRow({ item, index }: { item: ReceiptItem; index: number }) {
   );
 }
 
+/** The last deleted item, kept so one tap can bring it back. */
+interface Removed {
+  item: ReceiptItem;
+  index: number;
+  assignment: ItemAssignment | undefined;
+}
+
 export function ReviewStep({ go }: { go: (s: "scan" | "split") => void }) {
-  const { receipt: r, setReceipt, addItem } = useBill();
+  const { receipt: r, setReceipt, addItem, removeItem, assignments, setAssignment } = useBill();
   const [showRaw, setShowRaw] = useState(false);
+  const [removed, setRemoved] = useState<Removed | null>(null);
+  const [showHidden, setShowHidden] = useState(false);
+  /** Hidden line (by position) → id of the item it was added back as. */
+  const [restored, setRestored] = useState<ReadonlyMap<number, string>>(new Map());
+  // Lines the total anchor set aside, and why rows are highlighted: derived from the scanned text
+  // (nothing extra is stored). A hidden line already back in the list is not offered again; if
+  // that item is deleted later, the line is offered again.
+  const hints = useMemo(() => reviewHints(r.rawOcrText), [r.rawOcrText]);
+  const itemKeys = new Set(r.items.map(rowKey));
+  const itemIds = new Set(r.items.map((it) => it.id));
+  const hidden = hints.setAside
+    .map((row, at) => ({ row, at }))
+    .filter(({ row, at }) => !itemIds.has(restored.get(at) ?? "") && !itemKeys.has(rowKey(row)));
+  const remove = (item: ReceiptItem, index: number) => {
+    setRemoved({ item, index, assignment: assignments[item.id] });
+    removeItem(item.id);
+  };
+  const undoRemove = () => {
+    if (!removed) return;
+    const { item, index, assignment } = removed;
+    setReceipt((x) => ({
+      ...x,
+      items: [...x.items.slice(0, index), item, ...x.items.slice(index)],
+    }));
+    if (assignment) setAssignment(item.id, assignment);
+    setRemoved(null);
+  };
+  const restore = (at: number) => {
+    const row = hints.setAside[at];
+    if (!row) return;
+    const id = newId("i");
+    setReceipt((x) => ({
+      ...x,
+      items: [
+        ...x.items,
+        {
+          id,
+          description: row.description,
+          quantity: row.quantity,
+          lineTotalCents: row.lineTotalCents,
+          flagged: true,
+        },
+      ],
+    }));
+    setRestored((m) => new Map(m).set(at, id));
+  };
   const totals = computeTotals(r);
   const set = (patch: Partial<typeof r>) => setReceipt((x) => ({ ...x, ...patch }));
   const flagged = (f: string) => r.uncertainFields?.includes(f);
@@ -159,6 +230,15 @@ export function ReviewStep({ go }: { go: (s: "scan" | "split") => void }) {
       }
     >
       <h1 className="text-2xl font-bold">Review receipt</h1>
+      {totals.ok && mismatch !== null && mismatch !== 0 && r.receiptTotalCents !== null && (
+        <Notice
+          tone="warning"
+          title={`Doesn't match the receipt total: ${mismatch > 0 ? "short by" : "over by"} ${formatMoney(Math.abs(mismatch))}`}
+        >
+          Items and charges come to {formatMoney(totals.value.totalCents)}; the receipt total is{" "}
+          {formatMoney(r.receiptTotalCents)}.
+        </Notice>
+      )}
       {r.ocrWarnings && r.ocrWarnings.length > 0 && (
         <Notice tone="warning" title="Check the scanned details">
           <ul className="list-disc pl-4">
@@ -198,12 +278,79 @@ export function ReviewStep({ go }: { go: (s: "scan" | "split") => void }) {
         </div>
         <ul className="space-y-2">
           {r.items.map((it, i) => (
-            <ItemRow key={it.id} item={it} index={i} />
+            <ItemRow
+              key={it.id}
+              item={it}
+              index={i}
+              reason={hints.reasons.get(rowKey(it))}
+              onRemove={() => remove(it, i)}
+            />
           ))}
         </ul>
+        {removed && (
+          <div
+            role="status"
+            className="flex items-center justify-between gap-2 rounded-lg bg-muted px-3 py-2 text-sm"
+          >
+            <span className="min-w-0 truncate">
+              Removed “{removed.item.description || `Item ${removed.index + 1}`}”.
+            </span>
+            <Button variant="outline" size="sm" onClick={undoRemove}>
+              <Undo2 className="h-4 w-4" aria-hidden /> Undo
+            </Button>
+          </div>
+        )}
         <Button variant="secondary" block onClick={addItem}>
           <Plus className="h-5 w-5" aria-hidden /> Add item
         </Button>
+        {hidden.length > 0 && (
+          <div className="rounded-lg border border-dashed border-border p-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-expanded={showHidden}
+              aria-controls="hidden-lines"
+              onClick={() => setShowHidden((v) => !v)}
+            >
+              {hidden.length} line{hidden.length === 1 ? "" : "s"} hidden —{" "}
+              {showHidden ? "hide" : "show"}
+            </Button>
+            {!showHidden && (
+              <p className="px-2 text-xs text-muted-foreground">
+                Probably not items: the receipt total is reached without them.
+              </p>
+            )}
+            {showHidden && (
+              <ul id="hidden-lines" className="mt-1 space-y-1">
+                {hidden.map(({ row, at }) => (
+                  <li
+                    key={at}
+                    className="flex items-center justify-between gap-2 rounded px-2 py-1 text-sm"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate">
+                        {row.description || "(no text)"}
+                        {row.quantity > 1 ? ` ×${row.quantity}` : ""}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {row.lineTotalCents === null ? "No price" : formatMoney(row.lineTotalCents)}{" "}
+                        · {row.reason}
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      aria-label={`Add back ${row.description || "line"}`}
+                      onClick={() => restore(at)}
+                    >
+                      <Plus className="h-4 w-4" aria-hidden /> Add back
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </Card>
 
       <Card className="space-y-3">
@@ -350,7 +497,15 @@ export function ReviewStep({ go }: { go: (s: "scan" | "split") => void }) {
         {totals.ok &&
           mismatch !== null &&
           (mismatch === 0 ? (
-            <Notice tone="success">Matches the receipt total exactly.</Notice>
+            hidden.length > 0 ? (
+              <Notice tone="warning">
+                Matches the receipt total, with {hidden.length} line{hidden.length === 1 ? "" : "s"}{" "}
+                hidden. Check under Items that{" "}
+                {hidden.length === 1 ? "it isn't an item" : "they aren't items"} you bought.
+              </Notice>
+            ) : (
+              <Notice tone="success">Matches the receipt total exactly.</Notice>
+            )
           ) : (
             <Notice
               tone="error"
