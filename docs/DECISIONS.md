@@ -372,3 +372,26 @@ charges don't match the printed total.
 **Why.** No storage schema change (owner rule); the parser is deterministic, so the same hints
 come back after a reload.
 **Where.** `review.ts`, `ReviewStep.tsx`.
+
+## Work orders and merging (owner decision, 12 Nov 2026)
+
+### Work is queued in `docs/WORK-ORDERS.md` and executed by Claude Code without confirmation
+**Rule.** The coordinator (Claude in the owner's planning chat) writes work orders into
+`docs/WORK-ORDERS.md` once decisions are made. Claude Code reads the file and executes the open
+work orders in order, one branch and one PR each, without asking for confirmation. Only the
+coordinator edits the file. `CLAUDE.md` and `AGENTS.md` point Claude Code to it.
+**Why.** The owner wants development to run without relaying instructions by hand.
+**Where.** `docs/WORK-ORDERS.md`, `CLAUDE.md`, `AGENTS.md`.
+
+### The coordinator merges; the owner hears about major changes and live testing
+**Rule.** The coordinator verifies each PR independently of the session that wrote it (diff scope,
+checks re-run, private-data scan, decisions read) and merges it. The coordinator also decides
+parser and scanner rules within the directions the owner has already set. The owner is told about
+major changes and asked for live testing on real devices. Claude Code still never merges and
+never pushes to `main`, and pushed history is never rewritten. This replaces "open a PR for owner
+review" in the rework brief's hard rule 1.
+**Still the owner's call.** New paid commitments, a new engine or a cloud OCR/vision API, storage
+schema changes, material new dependencies, and any change to how private receipt data is handled.
+**Why.** The owner delegated merging and rule decisions on 12 Nov 2026 and asked to be brought in
+only for major changes and live testing.
+
