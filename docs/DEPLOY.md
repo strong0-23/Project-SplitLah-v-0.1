@@ -17,7 +17,6 @@ with the same purpose. The values to enter are the important part.
 | `cloudflare/wrangler.jsonc` | The Worker config: name `splitlah`, pinned compatibility date, the build output to deploy, workers.dev and Preview URLs. No bindings, secrets or paid features. |
 | `src/server.ts`, `src/lib/security-headers.ts` | Security headers (CSP etc.) on pages the Worker renders. Only switched on by the `SPLITLAH_SECURITY_HEADERS` variable in the Cloudflare config, so the Lovable-hosted app is unchanged. |
 | `public/_headers` | `nosniff` and `Referrer-Policy` on static files. |
-| `paddle-models/`, `vite.config.ts` | Dev-only PaddleOCR model archives, kept out of `public/`; the `splitlah:paddle-models` plugin adds them only to builds with the engine switch on (see "Builds with Paddle on"). |
 
 The config is in `cloudflare/`, not the repository root, on purpose. The build tool (nitro) merges
 any root-level `wrangler.json(c)` into the config it generates, including inside Lovable's own
@@ -114,7 +113,7 @@ that.
 |---|---|
 | Requests | 100,000 per day |
 | CPU time | 10 ms per request |
-| Worker size | 64 MiB (this app: about 1.7 MiB, 383 KiB compressed) |
+| Worker size | 64 MiB (this app: about 1.7 MiB, 388 KiB compressed) |
 | Build minutes | 3,000 per month, one build at a time, 20-minute timeout |
 | Previews | 100 per Worker (the oldest are deleted automatically) |
 
@@ -136,53 +135,14 @@ To see the Cloudflare URL before merging the Batch D pull request, temporarily s
 branch (step 3, "Git branch") to `deploy/cloudflare`. After you merge, change it to `main` under
 **Settings** → **Build** → **Branch control**.
 
-## Builds with Paddle on (developers only)
+## Removed: the `VITE_SPLITLAH_ENGINE_SWITCH` build variable (11 Nov 2026)
 
-PaddleOCR is a dev-only challenger engine for the engine comparison (Batch 2c). A normal build,
-including every production deploy of `main`, contains **no Paddle files**: its model archives
-(21.5 MB) are kept in `paddle-models/`, outside `public/`, and its runtime is only built when the
-engine switch is on. A build with the switch on adds about 54.6 MB of static files (the two model
-archives, the SDK worker and ONNX Runtime's WASM), and the app then accepts `?engine=paddle`.
-
-The switch is the build variable `VITE_SPLITLAH_ENGINE_SWITCH` with the value `on` (not a secret).
-It has no effect on a build of the production branch `main`: Cloudflare sets `WORKERS_CI_BRANCH`
-on every build, and when that is `main` the build prints
-`VITE_SPLITLAH_ENGINE_SWITCH=on ignored on the production branch` and builds without Paddle.
-(If you ever change the production branch, also change `PRODUCTION_BRANCH` in
-`src/lib/scan/paddle-assets.ts`.)
-
-### Local build with Paddle on
-
-```powershell
-$env:VITE_SPLITLAH_ENGINE_SWITCH = "on"; npm.cmd run build; Remove-Item Env:VITE_SPLITLAH_ENGINE_SWITCH
-npx.cmd wrangler@4.154.0 dev --config cloudflare/wrangler.jsonc
-```
-
-(macOS/Linux: `VITE_SPLITLAH_ENGINE_SWITCH=on npm run build`.) Then open
-<http://localhost:8787/?engine=paddle>. Scan statuses start with `[dev]` while Paddle runs.
-`npm run dev` always has the switch on: open the address it prints with `?engine=paddle` added.
-Run a plain `npm run build` again before anything else, so a later local deploy doesn't pick up
-the Paddle build.
-
-### Paddle on in Cloudflare preview builds
-
-Do this only while you need Paddle in pull-request previews (for example for the Batch 2c run on
-your phone).
-
-1. Open the Worker `splitlah`, then **Settings**, then **Build**, then **Variables and secrets**
-   (the build variables, where `NODE_VERSION` already is; not the runtime **Variables & Secrets**).
-2. Select **Add**, set type **Text**, name `VITE_SPLITLAH_ENGINE_SWITCH`, value `on`, and save.
-3. Push a commit to the pull request's branch (or select **Retry build** on its latest build).
-   Settings only apply to builds started after the change.
-4. Open the Preview URL from the pull request comment with `?engine=paddle` added, for example
-   `https://<preview-url>/?engine=paddle`. The phone timing page for the engine comparison is at
-   `https://<preview-url>/dev/engine-timing` (docs/reports/2026-11-engine-comparison.md, "Phones").
-5. Check the next production build of `main`: its log should show the "ignored on the production
-   branch" line, and `https://splitlah.<your-subdomain>.workers.dev/paddle/PP-OCRv5_mobile_det.tar`
-   should not download a file, and `https://splitlah.<your-subdomain>.workers.dev/dev/engine-timing`
-   should show "Page not found".
-
-To turn it off, delete the variable in the same place; the next preview build has no Paddle.
+PaddleOCR was removed from the app after the engine comparison (docs/DECISIONS.md), and with it
+the dev engine switch and the `/dev/engine-timing` page. The build no longer reads
+`VITE_SPLITLAH_ENGINE_SWITCH`. If you added it for preview builds, delete it: Worker `splitlah` →
+**Settings** → **Build** → **Variables and secrets** (the build variables, next to
+`NODE_VERSION`), then delete `VITE_SPLITLAH_ENGINE_SWITCH`. Leaving it there does nothing, but it
+is no longer needed.
 
 ## Running the same checks locally
 

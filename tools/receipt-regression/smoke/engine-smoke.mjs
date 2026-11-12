@@ -1,11 +1,11 @@
-// Headless smoke test of the engine comparison harness (Phase 2c tooling). SYNTHETIC DATA ONLY.
+// Headless smoke test of the engine scoring harness (Tesseract). SYNTHETIC DATA ONLY.
 //
 // 1. Renders two invented receipts as text onto a canvas (computer-rendered PNGs, never a photo)
 //    and builds their verified references from the blank template (synthetic.mjs), in a new
 //    temporary folder.
 // 2. Starts the harness dev server (127.0.0.1:8081), opens it in headless Chrome, and runs the
-//    engine comparison in Both mode: once in held-out mode (3 warm re-scans) and once as a
-//    development run (no warm re-scans) to check the detail view.
+//    engine scoring: once in held-out mode (3 warm re-scans) and once as a development run (no warm
+//    re-scans) to check the detail view. Then the Batch 1b parser gate.
 // 3. Checks the summary block, and that no product name or amount appears in the summary, the
 //    page text in held-out mode, or the browser console; and that no request leaves the harness.
 //
@@ -74,7 +74,6 @@ try {
 
   async function runOnce({ heldOut, warm }) {
     await page.selectOption("#source", "engine");
-    await page.selectOption("#engines", "both");
     await page.selectOption("#warm", String(warm));
     await page.setChecked("#heldout", heldOut);
     // The plain multi-file inputs: the fallback for browsers without folder picking.
@@ -107,17 +106,20 @@ try {
   const held = await runOnce({ heldOut: true, warm: 3 });
   console.log(`--- held-out run (${held.seconds} s) ---\n${held.summary}\n`);
   const receiptLines = held.summary.split("\n").filter((l) => l.startsWith("receipt |"));
-  if (receiptLines.length !== 4) fail(`expected 4 receipt lines, got ${receiptLines.length}`);
+  if (receiptLines.length !== 2) fail(`expected 2 receipt lines, got ${receiptLines.length}`);
+  if (!receiptLines.every((l) => l.includes("engine=tesseract")))
+    fail("every receipt line must be a Tesseract scan");
   if (!held.summary.includes("run | set=held-out | runtime=desktop | browser=Chrome"))
     fail("run line missing or wrong");
   for (const l of receiptLines) {
     if (!l.includes("status=ok")) fail(`a scan failed: ${l}`);
     if (!/warm-ms=\d+,\d+,\d+/.test(l)) fail(`three warm timings expected: ${l}`);
   }
-  if (!held.summary.includes("(a) zero silent financial errors (Paddle): PENDING"))
-    fail("a Chrome-only run must leave the desktop verdict pending");
-  if (!held.summary.includes("DECISION: PENDING")) fail("decision must be pending");
-  if (!held.summary.includes("condition | tag=computer_rendered | engine=paddle | within-2="))
+  if (!held.summary.includes("engine | engine=tesseract | within-2=2/2 (100.0%) | silent=0"))
+    fail("Tesseract should score both synthetic receipts within 2 corrections, no silent errors");
+  if (/paddle|verdict|DECISION/i.test(held.summary))
+    fail("summary still mentions Paddle or a verdict");
+  if (!held.summary.includes("condition | tag=computer_rendered | engine=tesseract | within-2="))
     fail("photo-condition breakdown missing");
   if (/\| detail \|/.test(held.summary) || held.summary.includes("detail | id="))
     fail("held-out summary must not have per-receipt field detail");
@@ -132,7 +134,7 @@ try {
   const dev = await runOnce({ heldOut: false, warm: 0 });
   console.log(`--- development run (${dev.seconds} s) ---\n${dev.summary}\n`);
   if (!dev.summary.includes("run | set=development")) fail("development run line missing");
-  if (!dev.summary.includes("detail | id=REG901 | engine=paddle"))
+  if (!dev.summary.includes("detail | id=REG901 | engine=tesseract"))
     fail("development detail lines missing");
   if (!has(dev.pageText, "KAYA TOAST SET")) fail("development mode should show the detail view");
   for (const s of SECRETS) if (has(dev.summary, s)) fail(`dev summary contains "${s}"`);

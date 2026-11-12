@@ -4,6 +4,12 @@
 Paddle is wired in as a **dev-only** challenger engine behind `?engine=paddle`; Tesseract is still
 the only engine in production builds. Phase 2c (the comparison run) has **not** been started.
 
+> **Superseded, 11 Nov 2026: Paddle removed.** Paddle did not replace Tesseract in the Phase 2c
+> comparison (docs/reports/2026-11-engine-comparison.md §6), and the owner had it removed on
+> `cleanup/remove-paddle`. Everything Paddle-specific in this report (adapter, worker, models,
+> packages, engine switch, build variable, Vite plugin) no longer exists. The Tesseract
+> self-hosting in §8 is unchanged and still current. This report is kept as a record.
+
 ## Update 2026-11-11: merged with `main`, Paddle files out of production builds
 
 This section supersedes the earlier text where they differ (notably §4's note that the model

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera, FileText, ImageUp, RotateCcw, RotateCw, Sparkles } from "lucide-react";
 import { useBill } from "@/hooks/use-bill";
-import { ACCEPTED_TYPES, CANVAS_BLOCKED_MESSAGE, MAX_UPLOAD_BYTES, OcrCancelled, engineFactoryFor, preparePreview, scanReceipt, validateImageFile, type OcrProgress, type Rotation, type CropFractions } from "@/lib/scan";
+import { ACCEPTED_TYPES, CANVAS_BLOCKED_MESSAGE, MAX_UPLOAD_BYTES, OcrCancelled, preparePreview, scanReceipt, validateImageFile, type OcrProgress, type Rotation, type CropFractions } from "@/lib/scan";
 import { Button, Card, Notice } from "./ui";
 import { Shell } from "./Shell";
 
@@ -53,7 +53,7 @@ export function ScanStep({ go }: { go: (s: "review" | "split") => void }) {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const res = await scanReceipt(file, { rotation, crop: manualCrop ? crop : null }, setProgress, ctrl.signal, engineFactoryFor()); // dev-only ?engine=paddle; always Tesseract in production
+      const res = await scanReceipt(file, { rotation, crop: manualCrop ? crop : null }, setProgress, ctrl.signal);
       if (ctrl.signal.aborted) return;
       const { receipt } = res;
       if (receipt.items.length === 0) {

@@ -82,14 +82,13 @@ function cases(): EngineCase[] {
 }
 
 /**
- * REG901 reads correctly; REG902 misreads one name (Paddle only: recognisable, so matched by
- * default and missing + extra under `exact`); REG903 fails to load (Paddle).
+ * REG901 reads correctly; REG902 misreads one name (recognisable, so matched by default and
+ * missing + extra under `exact`); REG903 fails to load.
  */
-const fakeScan: ScanFn = async (engine, image) => {
+const fakeScan: ScanFn = async (_engine, image) => {
   const id = image.name.slice(0, 6);
-  if (engine === "paddle" && id === "REG903")
-    throw new OcrError("load", `Could not read ${NAMES[0]} at 87.21`); // a message quoting content
-  const text = engine === "paddle" && id === "REG902" ? TEXT.replace("NARWHAL", "NARVVHAL") : TEXT;
+  if (id === "REG903") throw new OcrError("load", `Could not read ${NAMES[0]} at 87.21`); // a message quoting content
+  const text = id === "REG902" ? TEXT.replace("NARWHAL", "NARVVHAL") : TEXT;
   const parsed = rework.parse(text);
   return { receipt: { ...parsed.receipt, rawOcrText: text }, warnings: parsed.warnings };
 };
@@ -118,7 +117,7 @@ async function heldOutRun() {
   const progress: string[] = [];
   const rows: string[] = [];
   const out = await runEngineComparison(cases(), fakeScan, {
-    engines: ["tesseract", "paddle"],
+    engines: ["tesseract"],
     warmRuns: 3,
     heldOut: true,
     signal: new AbortController().signal,
@@ -137,7 +136,7 @@ async function heldOutRun() {
       version: "142.0",
       os: "Windows",
       revision: "test",
-      engines: ["tesseract", "paddle"],
+      engines: ["tesseract"],
       warmRuns: 3,
       nameMatch: "recognisable-0.70",
       complete: out.complete,
@@ -155,7 +154,9 @@ describe("held-out mode: no reference values anywhere", () => {
     expectNoReferenceValues(progress.join("\n"));
     expectNoReferenceValues(rows.join("\n"));
     expectNoReferenceValues(JSON.stringify(out.results));
-    expect(summary).toContain("receipt | id=REG903 | engine=paddle | status=failed | stage=load");
+    expect(summary).toContain(
+      "receipt | id=REG903 | engine=tesseract | status=failed | stage=load",
+    );
     expect(summary).not.toContain("detail |");
   });
 
@@ -166,14 +167,14 @@ describe("held-out mode: no reference values anywhere", () => {
 
   it("development summaries hold no reference values either (detail is counts only)", async () => {
     const out = await runEngineComparison(cases(), fakeScan, {
-      engines: ["tesseract", "paddle"],
+      engines: ["tesseract"],
       warmRuns: 0,
       heldOut: false,
       nameMatch: "exact", // so the misread name shows up as missing + extra in the detail line
       signal: new AbortController().signal,
       now,
     });
-    expect(out.details).toHaveLength(6);
+    expect(out.details).toHaveLength(3);
     const run: DesktopRun = {
       info: {
         set: "development",
@@ -182,7 +183,7 @@ describe("held-out mode: no reference values anywhere", () => {
         version: "1",
         os: "Windows",
         revision: "t",
-        engines: ["tesseract", "paddle"],
+        engines: ["tesseract"],
         warmRuns: 0,
         nameMatch: "exact",
         complete: true,
@@ -191,14 +192,14 @@ describe("held-out mode: no reference values anywhere", () => {
     };
     const summary = summaryBlock(run, false);
     expect(summary).toContain("name-match=exact");
-    expect(summary).toContain("detail | id=REG902 | engine=paddle | missing=1 | extra=1");
+    expect(summary).toContain("detail | id=REG902 | engine=tesseract | missing=1 | extra=1");
     expectNoReferenceValues(summary);
     for (const s of spies) expect(s).not.toHaveBeenCalled();
   });
 });
 
 describe("runner: scoring, timing and failures", () => {
-  it("scores each engine, keeps failures in the results and times 1 + 3 scans", async () => {
+  it("scores each receipt, keeps failures in the results and times 1 + 3 scans", async () => {
     const { out } = await heldOutRun();
     expect(out.complete).toBe(true);
     const get = (id: string, e: string) => out.results.find((r) => r.id === id && r.engine === e)!;
@@ -211,22 +212,18 @@ describe("runner: scoring, timing and failures", () => {
       stable: true,
     });
     // A recognisable misspelling is matched with 0 corrections (owner decision, 11 Nov 2026).
-    expect(get("REG902", "paddle").corrections).toMatchObject({ missing: 0, extra: 0, total: 0 });
-    expect(get("REG903", "paddle")).toMatchObject({
+    expect(get("REG902", "tesseract").corrections).toMatchObject({
+      missing: 0,
+      extra: 0,
+      total: 0,
+    });
+    expect(get("REG903", "tesseract")).toMatchObject({
       status: "failed",
       stage: "load",
       corrections: null,
       warmMs: [],
     });
-    // Engine-major order: all Tesseract scans first.
-    expect(out.results.map((r) => r.engine)).toEqual([
-      "tesseract",
-      "tesseract",
-      "tesseract",
-      "paddle",
-      "paddle",
-      "paddle",
-    ]);
+    expect(out.results.map((r) => r.id)).toEqual(["REG901", "REG902", "REG903"]);
   });
 
   it("records a failed warm scan as null and marks the receipt unstable", async () => {
@@ -257,17 +254,17 @@ describe("runner: scoring, timing and failures", () => {
         ctrl.abort();
         return fakeScan(e, image, s);
       },
-      { engines: ["tesseract", "paddle"], warmRuns: 3, heldOut: true, signal: ctrl.signal, now },
+      { engines: ["tesseract"], warmRuns: 3, heldOut: true, signal: ctrl.signal, now },
     );
     expect(out.complete).toBe(false);
     expect(out.results).toHaveLength(1);
     expect(out.results[0]).toMatchObject({ status: "cancelled" });
   });
 
-  it("times without scoring when there is no reference (phone page)", async () => {
+  it("times without scoring when there is no reference", async () => {
     const [c] = cases();
     const out = await runEngineComparison([{ ...c!, expected: null }], fakeScan, {
-      engines: ["paddle"],
+      engines: ["tesseract"],
       warmRuns: 3,
       heldOut: true,
       signal: new AbortController().signal,

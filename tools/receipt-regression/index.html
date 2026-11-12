@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>SplitLah local receipt regression and engine comparison</title>
+    <title>SplitLah local receipt regression and engine scoring</title>
     <style>
       body {
         font: 16px system-ui;
@@ -82,16 +82,16 @@
     </style>
   </head>
   <body>
-    <h1>Local receipt regression: engines and parsers</h1>
+    <h1>Local receipt regression: OCR and parsers</h1>
     <p>
       Runs on this computer only. Files stay in this browser's memory; photos are never uploaded.
-      Engine files (Tesseract, PaddleOCR) come from this page's own address.
+      Tesseract's files come from this page's own address.
     </p>
     <label
       >Source
       <select id="source">
         <option value="engine">
-          Engine comparison (Phase 2c): Tesseract vs Paddle, photos + verified references
+          Engine scoring: Tesseract corrections and silent errors, photos + verified references
         </option>
         <option value="owner">
           Parser gate (Batch 1b): parser-v2 vs rework, photos + verified references
@@ -104,8 +104,8 @@
       <label
         ><input id="heldout" type="checkbox" checked /> Held-out mode: show and keep receipt IDs and
         counts only (no photos, OCR text, field values or check names; full report download off).
-        Engine runs made with this on count as the held-out set; with it off they are development
-        (preflight) runs and give no verdict.</label
+        Engine runs made with this on are marked as the held-out set; with it off they are
+        development runs.</label
       >
     </fieldset>
     <fieldset id="owner-controls">
@@ -133,15 +133,7 @@
       >
     </fieldset>
     <fieldset id="engine-controls">
-      <legend>Engine comparison</legend>
-      <label
-        >Engines
-        <select id="engines">
-          <option value="both">Both (every receipt with Tesseract, then with Paddle)</option>
-          <option value="tesseract">Tesseract only</option>
-          <option value="paddle">Paddle only</option>
-        </select></label
-      >
+      <legend>Engine scoring (Tesseract)</legend>
       <label
         >Warm re-scans per receipt
         <select id="warm">
@@ -180,13 +172,12 @@
     <h2>Summary (safe to share: receipt IDs and counts only)</h2>
     <textarea id="summary" readonly placeholder="Appears after a run."></textarea>
     <button id="copy" disabled>Copy summary</button>
-    <h2>Combine with other browsers and phones</h2>
+    <h2>Combine with other browsers</h2>
     <p>
-      Paste the summary block from the other desktop browser (Edge or Firefox) and the result lines
-      from the phone timing page, then select Combine. Only the run, receipt and phone lines are
-      read; the verdict is recomputed.
+      Paste the summary block from another browser, then select Combine. Only the run and receipt
+      lines are read; each run's aggregates are recomputed.
     </p>
-    <textarea id="pasted" placeholder="Paste summaries and phone result lines here"></textarea>
+    <textarea id="pasted" placeholder="Paste summaries here"></textarea>
     <button id="combine">Combine</button>
     <div id="results"></div>
     <script type="module" src="/main.ts"></script>

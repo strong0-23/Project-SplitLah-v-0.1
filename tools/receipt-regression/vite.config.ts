@@ -2,17 +2,14 @@ import { defineConfig, type Plugin } from "vite";
 import { createReadStream } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { PADDLE_MODEL_MANIFEST, PADDLE_MODEL_URL_DIR } from "../../src/lib/scan/paddle-assets";
 import { TESSERACT_ASSET_MANIFEST } from "../../src/lib/scan/tesseract-assets";
 
 const repo = fileURLToPath(new URL("../../", import.meta.url));
 
 /**
- * The engines' pinned files, served from the harness's own origin (127.0.0.1:8081), exactly as the
- * app serves them: Tesseract's from `public/tesseract/` and Paddle's model archives from
- * `paddle-models/`. Only the files named in the two manifests are served; nothing else in
- * `public/` and no receipt data. ONNX Runtime's WASM and the Paddle worker are served by Vite from
- * `node_modules` and `src/lib/scan` like any other module.
+ * Tesseract's pinned files, served from the harness's own origin (127.0.0.1:8081), exactly as the
+ * app serves them from `public/tesseract/`. Only the files named in the manifest are served;
+ * nothing else in `public/` and no receipt data.
  */
 function engineFiles(): Plugin {
   const routes = new Map<string, { file: string; type: string }>();
@@ -20,11 +17,6 @@ function engineFiles(): Plugin {
     routes.set(`/${a.path}`, {
       file: path.join(repo, "public", a.path),
       type: a.path.endsWith(".js") ? "text/javascript" : "application/octet-stream",
-    });
-  for (const a of PADDLE_MODEL_MANIFEST)
-    routes.set(`${PADDLE_MODEL_URL_DIR}${a.file}`, {
-      file: path.join(repo, "paddle-models", a.file),
-      type: "application/x-tar",
     });
   return {
     name: "harness-engine-files",
@@ -45,16 +37,11 @@ function engineFiles(): Plugin {
 export default defineConfig({
   root: fileURLToPath(new URL(".", import.meta.url)),
   publicDir: false,
-  resolve: {
-    // Same as the app (vite.config.ts): Paddle's runtime uses ONNX Runtime's WASM-only build.
-    alias: [{ find: /^onnxruntime-web$/, replacement: "onnxruntime-web/wasm" }],
-  },
   optimizeDeps: {
-    // Pre-bundled up front, so a first Paddle or Tesseract scan never triggers a dependency
-    // re-optimisation (which reloads the page and would end a run).
-    include: ["tesseract.js", "zod", "@paddleocr/paddleocr-js"],
+    // Pre-bundled up front, so a first scan never triggers a dependency re-optimisation (which
+    // reloads the page and would end a run).
+    include: ["tesseract.js", "zod"],
   },
-  worker: { format: "es" },
   server: {
     host: "127.0.0.1",
     port: 8081,
@@ -66,7 +53,7 @@ export default defineConfig({
       allow: [
         fileURLToPath(new URL("../../src/lib", import.meta.url)),
         fileURLToPath(new URL(".", import.meta.url)),
-        // The engines' code and WASM (tesseract.js, PaddleOCR SDK, ONNX Runtime).
+        // Tesseract's code (tesseract.js).
         fileURLToPath(new URL("../../node_modules", import.meta.url)),
       ],
       deny: ["**/receipt-regression.local/**", "**/.git/**", "**/.env*"],
