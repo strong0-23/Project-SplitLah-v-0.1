@@ -9,6 +9,10 @@
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
 
+## How work is assigned
+- The work queue is `docs/WORK-ORDERS.md`. Started with no specific task, or told to "run the queue": read that file on `origin/main` and execute it as it says, without asking for confirmation. Given a different task by the owner: do that task and leave the queue alone.
+- Never push to `main`, never merge and never edit `docs/WORK-ORDERS.md`; the coordinator verifies and merges each PR (docs/DECISIONS.md, "Work orders and merging").
+
 ## Splitlah architecture
 - All money is integer cents and rates are integer basis points; financial logic lives in pure functions in src/lib/bill.ts + money.ts so it can be unit-tested without UI.
 - Receipt scanning lives in the feature module `src/lib/scan/*`; UI imports `@/lib/scan` (its `index.ts`) only. See docs/MODULES.md for the module table and docs/DECISIONS.md for scanner decisions D1–D6.
