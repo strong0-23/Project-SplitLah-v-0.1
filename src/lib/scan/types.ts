@@ -1,6 +1,6 @@
 /**
  * Contracts shared by the receipt-scan modules. Nothing here depends on the DOM, React or an OCR SDK,
- * so any engine (Tesseract today, PaddleOCR or another later) can be plugged in behind `OcrEngine`.
+ * so any engine (Tesseract today, another on-device engine later) can be plugged in behind `OcrEngine`.
  */
 
 export interface BBox {
@@ -44,7 +44,7 @@ export interface OcrEngine {
   readonly name: string;
   /**
    * Optional time limit for `load`, in ms. When absent the workflow's default (`LOAD_TIMEOUT_MS`)
-   * applies. An engine with a larger first download (PaddleOCR) can ask for more.
+   * applies. An engine with a larger first download can ask for more.
    */
   readonly loadTimeoutMs?: number;
   load(onProgress: (p: EngineProgress) => void): Promise<void>;

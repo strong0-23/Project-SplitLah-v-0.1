@@ -1,8 +1,9 @@
 /**
- * Phase 2c runner: scans each receipt with each chosen engine through the app's own scan pipeline,
- * times one first scan plus warm re-scans, and scores the app's receipt against the owner's
- * verified reference. The scan function is injected (main.ts passes `scanReceipt` with an engine
- * factory), so this module has no DOM, no OCR SDK and no console output, and is unit-tested.
+ * Engine runner (Phase 2c tooling; Tesseract only since Paddle's removal, 11 Nov 2026): scans each
+ * receipt with each chosen engine through the app's own scan pipeline, times one first scan plus
+ * warm re-scans, and scores the app's receipt against the owner's verified reference. The scan
+ * function is injected (main.ts passes `scanReceipt` with the Tesseract engine factory), so this
+ * module has no DOM, no OCR SDK and no console output, and is unit-tested.
  *
  * Held-out mode: nothing per-field is kept. Results hold IDs, counts, stages and timings only;
  * error messages are reduced to their stage; `details` is never built; progress text names the
@@ -23,7 +24,7 @@ export interface EngineCase {
   /** REG id from the file name. */
   id: string;
   image: File;
-  /** The verified reference's scored fields; null = time only, no scoring (phone page). */
+  /** The verified reference's scored fields; null = time only, no scoring. */
   expected: Expected | null;
   /** Sanitised photo-condition tags (comparison.ts `cleanTags`). */
   tags?: string[];

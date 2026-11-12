@@ -4,9 +4,10 @@
  * clicked (Download is off in held-out mode).
  *
  * Sources:
- * - Engine comparison (Phase 2c, default): photos + verified references, each photo scanned by
- *   Tesseract and/or PaddleOCR through the app's own scan pipeline (`scanReceipt`, engine injected),
- *   scored by extra correction actions (corrections.ts), decision rule in comparison.ts.
+ * - Engine scoring (default): photos + verified references, each photo scanned by Tesseract through
+ *   the app's own scan pipeline (`scanReceipt`, engine injected), scored by extra correction
+ *   actions and silent errors (corrections.ts, comparison.ts). PaddleOCR was compared in Phase 2c
+ *   and removed (11 Nov 2026); another engine would be added to `ENGINE_FACTORIES`.
  * - Parser gate (Batch 1b): parser-v2 (baseline) and the rework parser on the SAME text.
  * - Owner references (default): a photos folder (REG001.jpg …) and a verified-references folder
  *   (REG001.owner-inventory-v2.reference.private.json …), paired by REG id, Browser OCR mode.
@@ -33,7 +34,6 @@ import { checkReference, pairFiles, toExpected, UNKNOWN_REFERENCE_CREDIT } from 
 import { PARSERS } from "./parsers";
 import {
   createTesseractEngine,
-  engineFactoryFor,
   scanReceipt,
   validateImageFile,
   OcrError,
@@ -43,6 +43,7 @@ import {
 import {
   cleanTags,
   describeUserAgent,
+  ENGINES,
   parseSummaries,
   combinedBlock,
   nameMatchConflict,
@@ -68,7 +69,6 @@ const photosList = $<HTMLInputElement>("photos-files");
 const refsDir = $<HTMLInputElement>("references");
 const refsList = $<HTMLInputElement>("references-files");
 const heldOutBox = $<HTMLInputElement>("heldout");
-const enginesPicker = $<HTMLSelectElement>("engines");
 const warmPicker = $<HTMLSelectElement>("warm");
 const engineControls = $("engine-controls");
 const baselineBox = $("baseline-box");
@@ -366,15 +366,12 @@ combine.onclick = () => {
     ? summaryBlock(engineRun.run, engineRun.heldOut, parsed)
     : combinedBlock(parsed);
   copy.disabled = !summaryBox.value;
-  const conflict = nameMatchConflict(
-    engineRun ? [engineRun.run, ...parsed.runs] : parsed.runs,
-    parsed.phones,
-  );
+  const conflict = nameMatchConflict(engineRun ? [engineRun.run, ...parsed.runs] : parsed.runs);
   if (conflict) {
     status.textContent = `Refused: ${conflict}.`;
     return;
   }
-  status.textContent = `Combined: ${parsed.runs.length} pasted run(s), ${parsed.phones.length} phone line(s)${parsed.problems.length ? `, ${parsed.problems.length} unreadable line(s)` : ""}.`;
+  status.textContent = `Combined: ${parsed.runs.length} pasted run(s)${parsed.problems.length ? `, ${parsed.problems.length} unreadable line(s)` : ""}.`;
 };
 
 /**
@@ -636,12 +633,11 @@ save.onclick = () => {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 // ---------------------------------------------------------------------------------------------
-// Engine comparison (Phase 2c)
+// Engine scoring (Phase 2c tooling, Tesseract only)
 
-const ENGINE_FACTORIES: Record<EngineId, (() => OcrEngine) | undefined> = {
+/** Stable factories: the engine pool reuses a loaded engine by factory identity. */
+const ENGINE_FACTORIES: Record<EngineId, () => OcrEngine> = {
   tesseract: () => createTesseractEngine(),
-  // The app's own dev engine switch (on in this dev server), so Paddle runs exactly as in the app.
-  paddle: engineFactoryFor("?engine=paddle"),
 };
 
 function renderEngineResult(r: ReceiptEngineResult, d: EngineDetail | null) {
@@ -669,12 +665,7 @@ function renderEngineResult(r: ReceiptEngineResult, d: EngineDetail | null) {
 async function runEngines() {
   summaryBox.value = "";
   copy.disabled = true;
-  const engines: EngineId[] =
-    enginesPicker.value === "both" ? ["tesseract", "paddle"] : [enginesPicker.value as EngineId];
-  if (engines.some((e) => !ENGINE_FACTORIES[e])) {
-    status.textContent = "Paddle is not available in this build (dev engine switch off).";
-    return;
-  }
+  const engines: EngineId[] = [...ENGINES];
   const prepared = await ownerCases();
   if (!prepared) return;
   const cases: EngineCase[] = [];
@@ -700,7 +691,6 @@ async function runEngines() {
     source,
     revision,
     heldOutBox,
-    enginesPicker,
     warmPicker,
   ];
   for (const el of controls) el.disabled = true;
@@ -751,7 +741,7 @@ async function runEngines() {
     engineRun = { run, heldOut: held };
     summaryBox.value = summaryBlock(run, held, parseSummaries(pasted.value));
     const done = new Set(out.results.map((r) => r.id)).size;
-    status.textContent = `${out.complete ? "Engine run finished" : "Engine run cancelled (incomplete: no verdict)"}: ${done}/${cases.length} receipts.\n${prepared.setupNotes.join("\n")}`;
+    status.textContent = `${out.complete ? "Engine run finished" : "Engine run cancelled (incomplete)"}: ${done}/${cases.length} receipts.\n${prepared.setupNotes.join("\n")}`;
   } catch {
     status.textContent = "Harness error during the engine run (details hidden).";
   } finally {

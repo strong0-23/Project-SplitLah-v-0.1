@@ -28,6 +28,8 @@ Owner-approved decisions. Each has the rule and the reason for it.
 **Rule.** OCR engines sit behind `OcrEngine` (`types.ts`). Tesseract is the default. Another on-device engine is a new adapter and needs no parser change.
 **Why.** The engine choice (Tesseract vs PaddleOCR) is to be made on evidence later (Batch 2). A narrow interface lets both run on the same parser, so a comparison measures the engine alone.
 **Where.** `types.ts`, `tesseract-engine.ts`, `scan.ts` (engine injected).
+**Update (11 Nov 2026).** PaddleOCR was compared and removed (see "Engine comparison result").
+The interface, engine pool and injection stay, so another engine could still be added this way.
 
 ### D6: Delivery and similar fees count as a service charge
 **Rule.** Delivery fees count as a service charge, spread in proportion to what each person ordered. They are not shown as an item. Delivery fee/charge, platform fee, packaging/packing fee, small-order fee and booking fee (plus common Malay/Indonesian/European equivalents) add to `serviceAmountCents`. A negative fee line (for example "Delivery Discount -1.00") reduces that amount.
@@ -91,6 +93,12 @@ step 5); Paddle's files wait for the decision on adding Paddle.
 
 
 ## Receipt scanner, Batch 2b: PaddleOCR as a dev-only challenger (owner decisions, 11 Nov 2026)
+
+> **Superseded on 11 Nov 2026.** Paddle was removed after the Phase 2c comparison (see "Engine
+> comparison result" below). The entries in this section are kept as a record; none of their files,
+> packages, plugin, switch or build variable exist any more. The generic part survives:
+> `OcrEngine.loadTimeoutMs` (an optional per-engine load limit) stays in the interface, now with
+> no engine setting it.
 
 ### PaddleOCR SDK, dev-only, WASM-only runtime
 **Rule.** `@paddleocr/paddleocr-js` is added at exactly `0.4.2`, with `onnxruntime-web` pinned at
@@ -257,6 +265,53 @@ rule before any held-out run keeps it from being chosen after seeing results.
 (`evaluate`'s `nameMatch` option, default `exact`), `engine-runner.ts` (default `recognisable`),
 `comparison.ts` (`name-match` field, `nameMatchConflict`), `tools/receipt-regression/README.md`,
 `docs/reports/2026-11-engine-comparison.md`.
+
+## Engine comparison result and Paddle removal (owner decisions, 11 Nov 2026)
+
+### Verdict: Paddle does not replace Tesseract
+**Rule.** Tesseract stays the only OCR engine. The Phase 2c held-out comparison (revision
+`6dbcd90`, Edge 157 and Firefox 152, 7 held-out receipts, `name-match=recognisable-0.70`, first
+use) failed the decision rule: (a) Paddle had 7 silent financial errors in each browser (Tesseract
+3); (b) both engines were 0/7 within 2 corrections in each browser (+0 points). Rules (c) and (d)
+(phones) were not run, because Paddle had already failed. Warm medians: Tesseract 5.8 s / 5.8 s,
+Paddle 12.5 s / 13.2 s (Edge / Firefox).
+**Why.** The rule, set before the run, required all of (a)–(d). At n = 7 one receipt is about 14.3
+points, but the margin on (a) does not depend on one receipt.
+**Where.** `docs/reports/2026-11-engine-comparison.md` §6.
+
+### Engine work stops (70% stop rule)
+**Rule.** No further engine evaluation, tuning or new engine without a new owner decision.
+**Why.** The stop rule triggered: neither engine reached 70% (5 of 7) within 2 corrections in
+either browser; both were 0/7. The development set scored 40–60% while the held-out set scored 0%,
+which points to overfitting to the familiar receipts rather than an engine problem alone.
+**Where.** `docs/reports/2026-11-engine-comparison.md` §6.5–6.6; `AGENTS.md`.
+
+### Paddle removed from the app
+**Rule.** PaddleOCR is removed completely: the adapter, worker, runtime and assets modules and their
+tests, the committed model archives (`paddle-models/`), the packages `@paddleocr/paddleocr-js` and
+`onnxruntime-web` (and their 17 transitive packages), the `splitlah:paddle-models` Vite plugin and
+the `onnxruntime-web` alias, the dev engine switch (`engine-select.ts`, `?engine=paddle`,
+`VITE_SPLITLAH_ENGINE_SWITCH`), and the `/dev/engine-timing` phone page with its guard. Kept: the
+`OcrEngine` interface (with the optional `loadTimeoutMs`), the engine pool and engine injection.
+The CSP is unchanged (no directive was Paddle-only); it keeps `'wasm-unsafe-eval'`.
+**Why.** Owner decision after the verdict. With one engine, a dev switch and a phone timing page
+have nothing left to choose between or time, so removing them is lighter than keeping
+Tesseract-only versions. Removing the packages and archives cuts install size and repository size;
+production builds already contained no Paddle files, so the deployed app is essentially unchanged.
+The harness keeps its scoring (corrections, silent errors, within-2 shares, timings, the 1b parser
+gate) for Tesseract alone, without the decision rule.
+**Where.** `package.json`, `bun.lock`, `vite.config.ts`, `src/lib/scan/`, `src/routes/`,
+`tools/receipt-regression/`, `docs/DEPLOY.md` (the build variable can be deleted in Cloudflare).
+
+### Held-out receipts reclassified as development
+**Rule.** The 7 receipts used in the Phase 2c held-out run are now development receipts, giving 12
+development receipts. A fresh held-out set will be collected later, with references written by the
+owner, before any new held-out run.
+**Why.** Their aggregate results are known and they will now be looked at closely, so they can no
+longer measure unseen performance. Their references were drafted by Claude from the owner's photos
+and checked by the owner, so the coordinator had seen them; owner-written references for the next
+set keep it independent. (Nothing from them went into any code brief before the run.)
+**Where.** `docs/OWNER-DATASET-GUIDE.md` (dataset handling), `docs/reports/2026-11-engine-comparison.md` §6.7–6.8.
 
 ## Batch 3: structure + review (owner direction, 11 Nov 2026; rules below proposed in the Batch 3 PR)
 

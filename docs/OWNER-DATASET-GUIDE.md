@@ -4,6 +4,12 @@ This is for you (the owner) only. Claude never sees these receipts, their photos
 or their OCR text. Claude only ever sees the summary block the harness produces (receipt IDs and
 counts).
 
+> **Update, 11 Nov 2026.** The engine comparison is finished and PaddleOCR was removed
+> (docs/DECISIONS.md). The 7 receipts used as the held-out set are now **development** receipts
+> (12 development receipts in all); you can keep them with your development receipts. A **fresh held-out set**
+> will be collected later, following this guide, with **references you write yourself** (not
+> drafted by Claude). The harness now scores Tesseract only (source "Engine scoring").
+
 ## 1. How many, and which
 
 - About **18 receipts** from at least **8 materially different layouts**. A layout is a merchant's

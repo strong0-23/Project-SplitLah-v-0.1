@@ -1,6 +1,6 @@
 /**
  * Keeps one loaded OCR engine alive between scans in a page session, so a second scan doesn't
- * restart the engine (worker, WASM and models). Same for every engine (Tesseract, PaddleOCR).
+ * restart the engine (worker, WASM and models). Same for any engine behind `OcrEngine`.
  *
  * Lifecycle (owner/coordinator decision, 11 Nov 2026):
  * - A scan acquires the engine for its factory. A loaded, idle engine of the same factory is reused;

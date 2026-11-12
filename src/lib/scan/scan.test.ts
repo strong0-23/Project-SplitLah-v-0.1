@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LOAD_TIMEOUT_MS, runOcr } from "./scan";
-import { OcrCancelled } from "./types";
+import { LOAD_TIMEOUT_MS, SCAN_TIMEOUT_MS, runOcr } from "./scan";
+import { OcrCancelled, OcrError, type OcrEngine } from "./types";
 
 const mocks = vi.hoisted(() => ({ createWorker: vi.fn() }));
 vi.mock("tesseract.js", () => ({ createWorker: mocks.createWorker, OEM: { LSTM_ONLY: 1 } }));
@@ -109,5 +109,87 @@ describe("OCR resource cleanup", () => {
     ctrl.abort();
     await failure;
     expect(worker.terminate).toHaveBeenCalled();
+  });
+});
+
+describe("per-engine load limit (OcrEngine.loadTimeoutMs)", () => {
+  /** A fake engine whose load and recognize run as given; records terminate calls. */
+  function fakeEngine(o: {
+    loadTimeoutMs?: number;
+    load: () => Promise<void>;
+    recognize: () => Promise<never>;
+  }) {
+    const engine = {
+      name: "fake",
+      ...(o.loadTimeoutMs ? { loadTimeoutMs: o.loadTimeoutMs } : {}),
+      load: vi.fn(o.load),
+      recognize: vi.fn(o.recognize),
+      terminate: vi.fn().mockResolvedValue(undefined),
+    } satisfies OcrEngine;
+    return engine;
+  }
+  const settle = (p: Promise<unknown>) => {
+    const box: { v: unknown } = { v: "pending" };
+    p.then(
+      (v) => (box.v = v),
+      (e) => (box.v = e),
+    );
+    return box;
+  };
+
+  it("uses the engine's own load limit instead of the default, then terminates it", async () => {
+    setup();
+    const engine = fakeEngine({
+      loadTimeoutMs: 120_000,
+      load: () => new Promise(() => {}),
+      recognize: () => new Promise(() => {}),
+    });
+    const box = settle(
+      runOcr(file, options, vi.fn(), new AbortController().signal, {
+        ...deps,
+        createEngine: () => engine,
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(LOAD_TIMEOUT_MS + 1000);
+    expect(box.v).toBe("pending"); // past the default limit, still loading
+    await vi.advanceTimersByTimeAsync(120_000 - LOAD_TIMEOUT_MS);
+    expect(box.v).toBeInstanceOf(OcrError);
+    expect(box.v).toMatchObject({ stage: "load" });
+    expect(engine.terminate).toHaveBeenCalled();
+  });
+
+  it("extends the overall scan limit by the extra load time, so recognition keeps its time", async () => {
+    setup();
+    const engine = fakeEngine({
+      loadTimeoutMs: 120_000,
+      load: () => new Promise((r) => setTimeout(r, 100_000)),
+      recognize: () => new Promise(() => {}),
+    });
+    const box = settle(
+      runOcr(file, options, vi.fn(), new AbortController().signal, {
+        ...deps,
+        createEngine: () => engine,
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(SCAN_TIMEOUT_MS + 1000);
+    expect(box.v).toBe("pending");
+    await vi.advanceTimersByTimeAsync(120_000 - LOAD_TIMEOUT_MS);
+    expect(box.v).toMatchObject({ stage: "timeout" });
+  });
+
+  it("an engine that sets no limit keeps the default", async () => {
+    setup();
+    const engine = fakeEngine({
+      load: () => new Promise(() => {}),
+      recognize: () => new Promise(() => {}),
+    });
+    const box = settle(
+      runOcr(file, options, vi.fn(), new AbortController().signal, {
+        ...deps,
+        createEngine: () => engine,
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(LOAD_TIMEOUT_MS + 1000);
+    expect(box.v).toMatchObject({ stage: "load" });
   });
 });
