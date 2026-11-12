@@ -141,6 +141,11 @@ two is not established. The remaining failures:
 | Headless smoke (`review-smoke.mjs`, `wrangler dev`, security headers on, synthetic receipt): scan → review (hidden line, add back, mismatch banner, delete, undo) → split | pass |
 | Harness before/after on 12 development receipts (headless Chrome) | run; section 4 |
 
+After merging `main` on 12 Nov 2026 (Paddle removed in PR #9, so its tests are gone): `npx tsc --noEmit` pass,
+`npm run receipts:check` pass, `npx vitest run` pass with 333 tests, `npm run receipts:test` pass with 77 tests,
+`npx vite build` pass with no Paddle files in the output. The smoke test and the harness before/after run
+were not repeated; the merge changed no file of this batch outside `docs/`.
+
 Not checked: phones, Edge, Firefox, Safari; the held-out receipts; the anchor on the owner's 7
 unseen receipts; screen readers (the controls have labels, `aria-expanded` and `role="status"`,
 but no assistive-technology run).
