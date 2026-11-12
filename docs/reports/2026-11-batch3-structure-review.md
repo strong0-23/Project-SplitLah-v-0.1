@@ -143,8 +143,9 @@ two is not established. The remaining failures:
 
 After merging `main` on 12 Nov 2026 (Paddle removed in PR #9, so its tests are gone): `npx tsc --noEmit` pass,
 `npm run receipts:check` pass, `npx vitest run` pass with 333 tests, `npm run receipts:test` pass with 77 tests,
-`npx vite build` pass with no Paddle files in the output. The smoke test and the harness before/after run
-were not repeated; the merge changed no file of this batch outside `docs/`.
+`npx vite build` pass with no Paddle files in the output, headless smoke (`review-smoke.mjs`) pass. The harness
+before/after run was not repeated. The merge conflicted only in `docs/DECISIONS.md` and `docs/MODULES.md`;
+`src/lib/scan/index.ts` merged automatically.
 
 Not checked: phones, Edge, Firefox, Safari; the held-out receipts; the anchor on the owner's 7
 unseen receipts; screen readers (the controls have labels, `aria-expanded` and `role="status"`,
