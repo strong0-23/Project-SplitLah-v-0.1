@@ -71,3 +71,115 @@ describe("ReviewStep: delivery/platform fee warning", () => {
     expect(screen.queryByText(WARNING)).not.toBeInTheDocument();
   });
 });
+
+// ---- Batch 3: fast corrections (synthetic receipts only) ----------------------------------------
+
+/** A header row ("Queue 58 3.00") the total doesn't need: the anchor hides it. */
+const HEADER_ROW = `SAMPLE NOODLE HOUSE
+Queue 58   3.00
+Date 01/11/2026 12:30
+Wonton Noodles   6.40
+Barley Drink     1.70
+Total            8.10
+VISA             8.10`;
+
+/** Items short of the printed total by 2.00. */
+const SHORT = `SAMPLE CAFE
+Item        Amount
+Flat White    5.00
+Banana Bread  4.00
+Total        11.00`;
+
+/** One item whose price had a letter fixed (D8): flagged, with a reason. */
+const REPAIRED = `SAMPLE DINER
+Item           Amount
+Fish Burger    1O.50
+Total          10.50`;
+
+describe("ReviewStep: hidden lines", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("collapses lines the total doesn't need under a small expander, and can add one back", async () => {
+    renderReview(HEADER_ROW);
+    await screen.findByDisplayValue("Wonton Noodles");
+    expect(screen.queryByDisplayValue("Queue 58")).not.toBeInTheDocument();
+    // The match is not shown as plain success while lines are hidden.
+    expect(screen.queryByText("Matches the receipt total exactly.")).not.toBeInTheDocument();
+    expect(screen.getByText(/Matches the receipt total, with 1 line hidden/)).toBeInTheDocument();
+
+    const toggle = screen.getByRole("button", { name: "1 line hidden — show" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Queue 58")).toBeInTheDocument();
+    expect(screen.getByText(/Not needed to reach the printed total/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add back Queue 58" }));
+    expect(screen.getByDisplayValue("Queue 58")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /line hidden/ })).not.toBeInTheDocument();
+    // Now the items exceed the total: the banner shows the difference.
+    expect(
+      screen.getByText(/Doesn't match the receipt total: over by SGD 3\.00/),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("ReviewStep: a line added back and deleted again", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("is offered again under the hidden lines", async () => {
+    renderReview(HEADER_ROW);
+    await screen.findByDisplayValue("Wonton Noodles");
+    fireEvent.click(screen.getByRole("button", { name: "1 line hidden — show" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add back Queue 58" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete item 3" }));
+    expect(screen.queryByDisplayValue("Queue 58")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /1 line hidden/ })).toBeInTheDocument();
+  });
+});
+
+describe("ReviewStep: one-tap remove with undo", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("removes an item at once and brings it back in place with Undo", async () => {
+    renderReview(SHORT);
+    await screen.findByDisplayValue("Flat White");
+    fireEvent.click(screen.getByRole("button", { name: "Delete item 1" }));
+    expect(screen.queryByDisplayValue("Flat White")).not.toBeInTheDocument();
+    expect(screen.getByText("Removed “Flat White”.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    const descs = screen.getAllByLabelText(/^Item \d/).map((el) => (el as HTMLInputElement).value);
+    expect(descs).toEqual(["Flat White", "Banana Bread"]);
+    expect(screen.queryByText(/Removed/)).not.toBeInTheDocument();
+  });
+});
+
+describe("ReviewStep: highlights and the total banner", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("shows a short reason under a highlighted row", async () => {
+    renderReview(REPAIRED);
+    const input = await screen.findByDisplayValue("Fish Burger");
+    expect(screen.getByText("Letters in the price were fixed")).toBeInTheDocument();
+    expect(input).toHaveAttribute("aria-describedby");
+  });
+
+  it("shows a clear banner with the difference when items and charges miss the printed total", async () => {
+    renderReview(SHORT);
+    await screen.findByDisplayValue("Flat White");
+    expect(
+      screen.getByText(/Doesn't match the receipt total: short by SGD 2\.00/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Items and charges come to SGD 9\.00; the receipt total is SGD 11\.00/),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no banner and plain success when everything matches with nothing hidden", async () => {
+    renderReview(REPAIRED);
+    await screen.findByDisplayValue("Fish Burger");
+    expect(screen.queryByText(/Doesn't match the receipt total/)).not.toBeInTheDocument();
+    expect(screen.getByText("Matches the receipt total exactly.")).toBeInTheDocument();
+  });
+});

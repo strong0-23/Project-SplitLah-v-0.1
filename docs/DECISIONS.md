@@ -312,3 +312,63 @@ longer measure unseen performance. Their references were drafted by Claude from 
 and checked by the owner, so the coordinator had seen them; owner-written references for the next
 set keep it independent. (Nothing from them went into any code brief before the run.)
 **Where.** `docs/OWNER-DATASET-GUIDE.md` (dataset handling), `docs/reports/2026-11-engine-comparison.md` §6.7–6.8.
+
+## Batch 3: structure + review (owner direction, 11 Nov 2026; rules below proposed in the Batch 3 PR)
+
+The owner chose "structure + review" after engine work stopped (Tesseract stays): understand the
+receipt's structure in general ways and make the review screen fast to correct. The rules below
+are the developer's implementation of that direction and wait for the owner's review in the PR.
+None changes the storage schema, the `Receipt` interface or the dependencies.
+
+### D9: total-anchored item selection; set aside, never deleted, never silent
+**Rule.** When a payable total was read, the item rows that add up to it (± printed charges and bill
+discount, or the GST-inclusive equivalent) are kept; the other doubtful rows are set aside as
+"probably not items". Only doubtful rows can be set aside: flagged rows, rows among the shop
+details at the top, rows printed after the total. An unflagged, priced row inside the item list is
+never set aside. If several subsets rank equally, or both tax readings fit, or a payment line
+disagrees with the total, nothing is hidden. Hidden rows stay on the review screen under
+"N lines hidden — show", each with "Add back"; the receipt is marked for item review and the total
+notice says lines are hidden instead of a plain "matches".
+**Why.** On unseen receipts most corrections were extra rows (headers, addresses, card blocks,
+footers). The printed total is the one number that says which rows are real; uniqueness, protected
+rows and the review signal keep a wrong guess from becoming a silent error.
+**Where.** `anchor.ts`, `parse.ts`, `ReviewStep.tsx`; algorithm and limits in docs/MODULES.md.
+
+### D10: the printed total is chosen with structural evidence
+**Rule.** A payment (card, cash, e-wallet) equal to a total candidate, or cash tendered minus the
+change, decides which candidate was paid. Totals printed per section are added when their sum is
+what was paid (flagged). When two different totals have nothing between them, the stronger label
+("Grand total", "Total incl. GST") is preferred, still flagged. "Total Inc. GST", "Total N items"
+and "Total Qty N" lines with money are totals. With no total label read and no charge lines, a last
+row equal to every item above it is used as the total, flagged, with the items marked for review.
+A payment, change, savings or points value is never itself the total.
+**Why.** A wrong printed total was the third biggest source of corrections; these are general
+receipt structures, not shop-specific strings.
+**Where.** `totals.ts`, `parse.ts`, `lexicon.ts` (`totalLabelStrength`, total vocabulary).
+
+### D11: GST-inclusive phrasing and tax tables
+**Rule.** "Inc."/"Incl." GST on a total line marks prices as GST-inclusive, so a following "GST
+Amount" is information, not added. A rate / net / tax / gross table gives the tax amount from its
+row (net + tax = gross) and its rate; with no service charge and no "before tax" subtotal it marks
+prices as including GST even when the row is unreadable. The arithmetic in `reconcileCharges`
+still decides when the numbers allow it, and the P5 charge-vs-rate check is unchanged.
+**Why.** Most charge corrections were on GST-inclusive receipts.
+**Where.** `lexicon.ts` (`INCLUSIVE_NOTE`, `TAX_TABLE_HEADER`), `totals.ts` (`readTaxTableRow`), `parse.ts`.
+
+### D12: header and footer guard
+**Rule.** Card-terminal, approval, reference, cardholder-copy, station/till and signature lines are
+never items (vocabulary in `lexicon.ts`, matched only with their delimiters, so product names such
+as "Signature Seafood Platter" are unaffected). On a receipt with no item heading, a priced row
+among the shop details is flagged ("Printed among the shop details"), so the anchor may set it
+aside. On a dot-decimal receipt, "14,60" is read as 14.60 and flagged as repaired (D8).
+**Why.** Header, address, payment and footer blocks were the main source of extra rows.
+**Where.** `lexicon.ts`, `parse.ts` (`headerZoneEnd`), `numbers.ts`.
+
+### D13: review hints are derived, not stored
+**Rule.** The hidden lines and the short reason under each highlighted row come from parsing the
+receipt's stored `rawOcrText` again (`review.ts`); nothing new is saved. Deleting an item is one tap
+with Undo (local to the screen). A banner at the top shows the difference whenever items and
+charges don't match the printed total.
+**Why.** No storage schema change (owner rule); the parser is deterministic, so the same hints
+come back after a reload.
+**Where.** `review.ts`, `ReviewStep.tsx`.

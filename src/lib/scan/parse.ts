@@ -14,6 +14,7 @@ import type { Receipt, ReceiptItem } from "../types";
 import { letterCount, NO_QTY_COLUMNS, readItemRow, splitItemLabel, type QtyColumns } from "./items";
 import {
   ADDRESS,
+  CHANGE_LABEL,
   classifyLabel,
   FEE,
   INCLUSIVE_NOTE,
@@ -25,6 +26,8 @@ import {
   NOT_MERCHANT,
   normaliseLabelWords,
   qtyColumnsOf,
+  TAX_TABLE_HEADER,
+  totalLabelStrength,
   UNIT_PRICE_HEADER,
   type LineKind,
 } from "./lexicon";
@@ -36,7 +39,16 @@ import {
   type Amount,
   type NumberFormat,
 } from "./numbers";
+import { anchorItems, type AnchorOutcome } from "./anchor";
 import { checkChargeRates, fmt, reconcileCharges } from "./reconcile";
+import {
+  findPaymentTotal,
+  findSumRow,
+  paidAmounts,
+  readTaxTableRow,
+  type PaymentLine,
+  type TotalCandidate,
+} from "./totals";
 
 export { scoreParse, isConsistent } from "./reconcile";
 export { splitItemLabel } from "./items";
@@ -52,12 +64,44 @@ export function hasFoldedFees(ocrWarnings: readonly string[] | null | undefined)
   return !!ocrWarnings?.some((w) => w.startsWith(FOLDED_FEES_NOTE));
 }
 
+/** A line the parser read as an item but set aside as probably not one (never deleted). */
+export interface SetAsideRow {
+  description: string;
+  quantity: number;
+  lineTotalCents: number | null;
+  /** Short reason shown on the review screen. */
+  reason: string;
+}
+
 export interface ParseResult {
   receipt: Receipt;
   warnings: string[];
   /** ISO code detected from the receipt, null if none printed. */
   currency: string | null;
+  /** Lines set aside by the total anchor (anchor.ts), in printed order. Not in `receipt.items`. */
+  setAside: SetAsideRow[];
+  /** Short reason per item of `receipt.items` (same order), or null when the item is not flagged. */
+  itemReasons: Array<string | null>;
+  /** What the total anchor did: see anchor.ts. "skipped" = no printed total, or nothing to check. */
+  anchor: AnchorOutcome["status"] | "skipped";
 }
+
+/** Short reasons for flagged rows, shown under the row on the review screen. */
+export const REASON = {
+  noPrice: "Price not read",
+  columns: "Quantity or price columns unclear",
+  quantity: "Quantity unclear",
+  repaired: "Letters in the price were fixed",
+  discount: "A discount was taken off",
+  header: "Printed among the shop details",
+  afterTotal: "Printed after the total",
+  check: "Check this line",
+  notNeeded: "Not needed to reach the printed total",
+  noPriceNotNeeded: "No price, and the total is reached without it",
+} as const;
+
+/** Dates and times in header lines ("21/10/26", "2026-10-21", "20:05"): never on an item row. */
+const DATE_OR_TIME = /\b\d{1,4}[/.-]\d{1,2}[/.-]\d{2,4}\b|\b\d{1,2}:\d{2}(?::\d{2})?\b/;
 
 type Section = "header" | "items" | "summary" | "footer";
 const SUMMARY: ReadonlySet<LineKind> = new Set([
@@ -158,7 +202,7 @@ export function parseReceiptText(text: string): ParseResult {
   return parseReceiptLines(text.split(/\r?\n/), text);
 }
 
-interface TotalRow {
+interface TotalRow extends TotalCandidate {
   cents: number;
   /** Label and amount were on separate lines ("TOTAL" / "51.80"): weaker evidence. */
   split: boolean;
@@ -166,6 +210,33 @@ interface TotalRow {
   chargesBefore: number;
   /** Index in `roundingRows` order: rounding rows seen before this total. */
   roundingBefore: number;
+}
+
+/** Header zone of a receipt with no item heading: see `headerZoneEnd`. */
+const isHeaderish = (l: Line) =>
+  l.kind === "noise" ||
+  l.kind === "info" ||
+  ADDRESS.test(l.text) ||
+  NOT_MERCHANT.test(l.label) ||
+  DATE_OR_TIME.test(l.text);
+
+/**
+ * Last line of the header (shop name, address, phone, date, bill number) on a receipt with no item
+ * heading: the last header-like line before the summary, unless at least two priced rows were
+ * already read after an earlier header-like line (then the item list had started). -1 if none.
+ */
+function headerZoneEnd(lines: readonly Line[]): number {
+  let end = -1;
+  let priced = 0;
+  for (let k = 0; k < lines.length; k++) {
+    const l = lines[k]!;
+    if (l.kind && (SUMMARY.has(l.kind) || l.kind === "payment")) break;
+    if (isHeaderish(l)) {
+      end = k;
+      priced = 0;
+    } else if (l.amounts.length && !l.kind && ++priced >= 2) break;
+  }
+  return end;
 }
 
 export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\n")): ParseResult {
@@ -225,6 +296,21 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
   let openItem: ReceiptItem | null = null;
   let section: Section = hasItemHeader ? "header" : "items";
   const last = () => items[items.length - 1];
+  /** Last line of the header zone when there is no item heading (header/footer guard). */
+  const headerEnd = hasItemHeader ? -1 : headerZoneEnd(lines);
+  /** Where each item was read: its line and the section the parser was in. */
+  const itemAt = new Map<ReceiptItem, { line: number; section: Section }>();
+  /** Short review reason per flagged item. */
+  const reasons = new Map<ReceiptItem, string>();
+  const flag = (item: ReceiptItem, reason: string) => {
+    item.flagged = true;
+    if (!reasons.has(item)) reasons.set(item, reason);
+  };
+  const payments: PaymentLine[] = [];
+  /** Lines left to look at under a tax-table heading. */
+  let taxTableLeft = 0;
+  let taxTableSeen = false;
+  let cur = 0;
 
   const dropPrefix = () => {
     if (wrapPrefix.length) skipped.push(wrapPrefix.join(" "));
@@ -237,7 +323,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
   const noteRepair = (amounts: Amount[], field: string | null, item?: ReceiptItem) => {
     const repaired = amounts.filter((a) => a.repairedFrom !== undefined);
     if (!repaired.length) return;
-    if (item) item.flagged = true;
+    if (item) flag(item, REASON.repaired);
     if (field) uncertain.add(field);
     for (const a of repaired)
       warnings.push(
@@ -246,11 +332,17 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
   };
   const pushItem = (item: ReceiptItem, observed: boolean) => {
     items.push(item);
+    itemAt.set(item, { line: cur, section });
     if (observed) qtyObserved.add(item);
     return item;
   };
   /** A product whose price can't be read: kept, flagged, with no price (never borrowed). */
-  const unpricedItem = (label: string, warning: string, columns: QtyColumns = cols) => {
+  const unpricedItem = (
+    label: string,
+    warning: string,
+    columns: QtyColumns = cols,
+    reason: string = REASON.noPrice,
+  ) => {
     const s = splitItemLabel(label, columns);
     if (s.taxMarked) anyTaxMarked = true;
     pushItem(
@@ -263,13 +355,41 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
       },
       s.qtyObserved,
     );
+    reasons.set(last()!, reason);
     uncertain.add("items");
     warnings.push(warning);
   };
 
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i]!;
+    cur = i;
     const continues: ReceiptItem | null = openItem;
+    // Tax table (rate / net / tax / gross): its rows give the tax amount and are never items.
+    if (!l.amounts.length && TAX_TABLE_HEADER.test(l.text) && !ITEM_HEADER.test(l.text)) {
+      taxTableLeft = 4;
+      taxTableSeen = true;
+      continue;
+    }
+    if (taxTableLeft > 0) {
+      taxTableLeft--;
+      const row =
+        l.amounts.length >= 3
+          ? readTaxTableRow(l.amounts.filter((a) => !a.negative).map((a) => a.cents))
+          : null;
+      if (row) {
+        noteRepair(l.amounts, "charges");
+        taxParts.push({ cents: row.tax, isTotal: false });
+        const bp = findRateBp(l.text);
+        if (bp !== null) {
+          r.gstRateBp = bp;
+          taxRateBp = bp;
+        }
+        taxTableLeft = 0;
+        continue;
+      }
+    }
+    // "Total Qty 3   20.00": an item count on a total line that also prints money is a total.
+    if (l.kind === "count" && l.amounts.length && /^total\b/i.test(l.words)) l.kind = "total";
     openItem = null;
     if (INCLUSIVE_NOTE.test(l.text) && !l.amounts.length) r.gstInclusive = true;
     const heading = l.amounts.length ? null : qtyColumnsOf(l.text);
@@ -378,7 +498,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
           // "VITAMIN B 12" / "2 16.00": the row's own quantity and amount.
           const s = splitItemLabel(label);
           const q = Number(qtyAmount![1]);
-          pushItem(
+          const splitItem = pushItem(
             {
               id: newId("i"),
               description: s.desc.slice(0, 80),
@@ -388,8 +508,34 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
             },
             q >= 1 && q <= 99,
           );
+          if (splitItem.flagged) reasons.set(splitItem, REASON.check);
           if (s.taxMarked) anyTaxMarked = true;
           noteRepair(rest.amounts, null, last());
+          i++;
+          continue;
+        }
+        const pair =
+          rest && rest.amounts.length === 2 && letterCount(rest.text) < 2 ? rest.amounts : null;
+        if (
+          pair &&
+          !pair.some((a) => a.negative) &&
+          Number(qtyAmount![1]) >= 1 &&
+          Number(qtyAmount![1]) * pair[0]!.cents === pair[1]!.cents
+        ) {
+          // "HERB RISOTTO" / "2  $6.35  $12.70": quantity × unit price = line total, under the name.
+          const s = splitItemLabel(label);
+          pushItem(
+            {
+              id: newId("i"),
+              description: s.desc.slice(0, 80),
+              quantity: Number(qtyAmount![1]),
+              lineTotalCents: pair[1]!.cents,
+              flagged: false,
+            },
+            true,
+          );
+          if (s.taxMarked) anyTaxMarked = true;
+          noteRepair(rest!.amounts, null, last());
           i++;
           continue;
         }
@@ -406,6 +552,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
             },
             false,
           );
+          reasons.set(last()!, REASON.quantity);
           if (s.taxMarked) anyTaxMarked = true;
           noteRepair(next.amounts, null, last());
           uncertain.add("items");
@@ -433,6 +580,8 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
           unpricedItem(
             label,
             "An item has unreadable quantity/price columns. Confirm its quantity and line amount.",
+            cols,
+            REASON.columns,
           );
           i++;
           continue;
@@ -495,7 +644,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
         prev.lineTotalCents - offerPrice === amt.cents;
       if (supported) {
         addDiscount(amt.cents, l.label || "offer");
-        prev.flagged = true;
+        flag(prev, REASON.discount);
         uncertain.add("discount");
         warnings.push(
           `An offer saving of ${fmt(amt.cents)} matches the item above and was taken off it. Please check it.`,
@@ -628,11 +777,15 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
             split,
             chargesBefore: chargesSeen,
             roundingBefore: roundingRows.length,
+            itemsBefore: items.length,
+            strength: totalLabelStrength(l.words),
           });
         if (INCLUSIVE_NOTE.test(l.text) && !taxParts.length) r.gstInclusive = true;
         section = section === "footer" ? "footer" : "summary";
         continue;
       case "payment":
+        // Evidence for the total (totals.ts); a payment amount is never itself the total.
+        if (!amt.negative) payments.push({ cents: amt.cents, change: CHANGE_LABEL.test(l.words) });
         if (totals.length) section = "footer";
         continue;
       default:
@@ -655,6 +808,8 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
         unpricedItem(
           l.label,
           "An item has a minus sign. Confirm its line amount and whether it is a discount or a return.",
+          cols,
+          REASON.check,
         );
         uncertain.add("discount");
         continue;
@@ -672,7 +827,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
         uncertain.add("discount");
         if (underItem) {
           addDiscount(amt.cents, "discount");
-          prev.flagged = true;
+          flag(prev, REASON.discount);
           warnings.push(
             `A minus amount with no label (${fmt(-amt.cents)}) was taken off the item above it. Check that it is a discount.`,
           );
@@ -700,6 +855,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
           },
           true,
         );
+        reasons.set(last()!, REASON.afterTotal);
         uncertain.add("items");
         continue;
       }
@@ -718,6 +874,8 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
       unpricedItem(
         l.rawLabel,
         "An item has damaged unit-price, quantity or amount columns. Confirm its highlighted values.",
+        cols,
+        REASON.columns,
       );
       continue;
     }
@@ -762,6 +920,8 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
       },
       row.qtyObserved,
     );
+    if (row.uncertain) reasons.set(item, REASON.quantity);
+    if (row.unitPriceOnlyCents !== null) reasons.set(item, REASON.noPrice);
     noteRepair(l.amounts, null, item);
     if (row.unitPriceOnlyCents !== null) {
       uncertain.add("items");
@@ -790,6 +950,33 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
     }
     r.discountCents += cents;
   }
+
+  // No total read: a last row equal to the sum of the items above it, with a weak label, is the
+  // total with a damaged label (totals.ts `findSumRow`). Used as a flagged total, never an item.
+  let sumRowTotal: number | null = null;
+  // Only with no charge, tax or discount lines: then a subtotal can't be mistaken for the total.
+  if (!totals.length && !damagedTotal && chargesSeen === 0 && !taxParts.length) {
+    const k = findSumRow(
+      items.map((it) => it.lineTotalCents),
+      items.map((it) => letterCount(it.description) < 4),
+    );
+    if (k >= 0) {
+      sumRowTotal = items[k]!.lineTotalCents;
+      skipped.push(items[k]!.description);
+      items.splice(k, 1);
+    }
+  }
+
+  // Header guard: a priced row printed among the shop details (above the last header line, on a
+  // receipt with no item heading) is kept but flagged, and may be set aside by the total anchor.
+  // Only when items were also read after the header zone (otherwise the zone guess is wrong).
+  const inHeader = (it: ReceiptItem) => (itemAt.get(it)?.line ?? Infinity) <= headerEnd;
+  if (items.some((it) => !inHeader(it)))
+    for (const it of items)
+      if (inHeader(it)) {
+        it.flagged = true;
+        reasons.set(it, REASON.header); // the most useful reason for this row
+      }
 
   r.items = items;
   let sum = items.reduce((s, it) => s + (it.lineTotalCents ?? 0), 0);
@@ -839,12 +1026,21 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
   // With cash rounding (D4), the figure before rounding.
   const direct = totals.filter((t) => !t.split);
   const pool = direct.length ? direct : totals;
-  const chosen = pool[pool.length - 1] ?? null;
-  for (let k = 1; k < direct.length; k++) {
+  let chosen = pool[pool.length - 1] ?? null;
+  // Payment agreement (totals.ts): a payment equal to one candidate settles which total was paid.
+  const pick = findPaymentTotal(pool, payments);
+  if (pick?.kind === "payment") chosen = pool[pick.index]!;
+  for (let k = 1; k < direct.length && pick?.kind !== "payment"; k++) {
     const a = direct[k - 1]!;
     const b = direct[k]!;
-    if (a.cents !== b.cents && a.chargesBefore === b.chargesBefore) {
-      // Two different totals with nothing between them to explain it (parser-v2): flag, don't pick silently.
+    if (
+      a.cents !== b.cents &&
+      a.chargesBefore === b.chargesBefore &&
+      a.itemsBefore === b.itemsBefore
+    ) {
+      // Two different totals with nothing between them to explain it (parser-v2): flag, don't pick
+      // silently. The stronger label ("Grand total" over "Amount") is preferred; else the later one.
+      if (a.strength > b.strength && chosen === b) chosen = a;
       uncertain.add("total");
       warnings.push(
         `Printed totals disagree (${fmt(a.cents)} and ${fmt(b.cents)}). Confirm the total; neither was changed.`,
@@ -889,7 +1085,23 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
     uncertain.add("total");
     warnings.push("A rounding line was printed but no total was found, so it was not applied.");
   }
-  if (rounding !== null && chosen) {
+  if (sumRowTotal !== null) {
+    r.receiptTotalCents = sumRowTotal;
+    // The match then only confirms the amounts read; the reading is damaged (no total label), so
+    // the item lines are marked for review too.
+    uncertain.add("total");
+    uncertain.add("items");
+    warnings.push(
+      `No total label was read. The last amount, ${fmt(sumRowTotal)}, equals the items above it, so it was used as the total. Please check it and the item names.`,
+    );
+  } else if (pick?.kind === "sections") {
+    // One total per section, and their sum is what was paid: the payable total is the sum.
+    r.receiptTotalCents = pick.cents;
+    uncertain.add("total");
+    warnings.push(
+      `This receipt prints a total for each part (${pick.parts.map(fmt).join(" + ")}). The total ${fmt(pick.cents)} is their sum, which matches the payment. Please check it.`,
+    );
+  } else if (rounding !== null && chosen) {
     const beforeRounding = pool.filter((t) => t.roundingBefore === 0);
     r.receiptTotalCents =
       beforeRounding.length && beforeRounding.length < pool.length
@@ -940,6 +1152,67 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
     }
   }
 
+  // A tax table with no service charge and no "before tax" subtotal: prices include the tax (retail
+  // receipts print net / tax / gross per rate), even when its row is unreadable. The arithmetic in
+  // reconcileCharges still decides when the numbers allow it.
+  if (taxTableSeen && serviceAmt === null && !subtotalSeen) r.gstInclusive = true;
+
+  // Total anchor (anchor.ts): which candidate rows add up to the printed total.
+  let anchorStatus: ParseResult["anchor"] = "skipped";
+  const setAside: SetAsideRow[] = [];
+  // A payment that matches neither the total nor total-after-change says the total may be incomplete
+  // (an item printed after it, a misread total): then nothing is hidden.
+  const paid = paidAmounts(payments);
+  const paymentDisagrees =
+    payments.length > 0 &&
+    !paid.has(r.receiptTotalCents ?? -1) &&
+    !(chosen && paid.has(chosen.cents));
+  if (r.receiptTotalCents !== null && items.length && !paymentDisagrees) {
+    const rowsIn = items.map((it) => {
+      const at = itemAt.get(it);
+      const inside = !!at && at.section === "items" && !inHeader(it);
+      const priced = it.lineTotalCents !== null && it.lineTotalCents > 0;
+      return { cents: it.lineTotalCents, inside, protected: inside && priced && !it.flagged };
+    });
+    if (rowsIn.some((row) => !row.protected)) {
+      const out = anchorItems({
+        rows: rowsIn,
+        totalCents: r.receiptTotalCents,
+        discountCents: r.discountCents,
+        serviceCents: serviceAmt ?? 0,
+        taxCents: taxAmt,
+        inclusive: r.gstInclusive ? true : null,
+      });
+      anchorStatus = out.status;
+      if (out.status === "matched" && out.setAside.length) {
+        const drop = new Set(out.setAside.map((k) => items[k]!));
+        for (const it of items) {
+          if (!drop.has(it)) continue;
+          setAside.push({
+            description: it.description,
+            quantity: it.quantity,
+            lineTotalCents: it.lineTotalCents,
+            reason: it.lineTotalCents === null ? REASON.noPriceNotNeeded : REASON.notNeeded,
+          });
+        }
+        r.items = items.filter((it) => !drop.has(it));
+        sum = r.items.reduce((s, it) => s + (it.lineTotalCents ?? 0), 0);
+        // A review signal: the user is told lines were hidden, so a wrongly hidden item is never silent.
+        uncertain.add("items");
+        warnings.unshift(
+          setAside.length === 1
+            ? "1 line was set aside as probably not an item: the printed total is reached without it. Check the hidden line under Items."
+            : `${setAside.length} lines were set aside as probably not items: the printed total is reached without them. Check the hidden lines under Items.`,
+        );
+      } else if (out.status === "ambiguous") {
+        uncertain.add("items");
+        warnings.push(
+          "More than one set of lines adds up to the printed total, so no line was hidden. Check the highlighted items.",
+        );
+      }
+    }
+  }
+
   if (mixedBasisRows) {
     uncertain.add("items");
     warnings.push(
@@ -951,13 +1224,13 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
   if (feeLines.length)
     warnings.unshift(`${FOLDED_FEES_NOTE} ${feeLines.join(", ")}.`.slice(0, 300));
 
-  if (items.length === 0) warnings.push("No purchased items were recognised. Add them manually.");
-  const missing = items.filter((it) => it.lineTotalCents === null).length;
+  if (r.items.length === 0) warnings.push("No purchased items were recognised. Add them manually.");
+  const missing = r.items.filter((it) => it.lineTotalCents === null).length;
   if (missing)
     warnings.push(
       `${missing} item line(s) were read without a price — enter the line total for highlighted items.`,
     );
-  if (items.some((it) => it.flagged && it.lineTotalCents !== null))
+  if (r.items.some((it) => it.flagged && it.lineTotalCents !== null))
     warnings.push("Some item lines look uncertain — please check highlighted lines.");
   if (skipped.length)
     warnings.push(
@@ -1000,5 +1273,12 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
   }
   r.uncertainFields = [...uncertain];
   r.ocrWarnings = warnings.slice(0, 20).map((w) => w.slice(0, 300));
-  return { receipt: r, warnings, currency: currency.code };
+  return {
+    receipt: r,
+    warnings,
+    currency: currency.code,
+    setAside,
+    itemReasons: r.items.map((it) => (it.flagged ? (reasons.get(it) ?? REASON.check) : null)),
+    anchor: anchorStatus,
+  };
 }
