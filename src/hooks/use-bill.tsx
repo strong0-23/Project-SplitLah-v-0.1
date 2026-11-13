@@ -35,9 +35,13 @@ export interface BillCtx extends Session {
 
 const blank = (): Session => ({ receipt: emptyReceipt(), participants: [], assignments: {} });
 
+/** Every UTF-16 code unit except U+0020–U+007E and U+0080–U+FFFF: exactly U+0000–U+001F and U+007F. */
+const CONTROL_CHARS = /[^\u0020-\u007e\u0080-\uffff]/g;
+
 export function sanitizeText(s: string, max: number): string {
-  // Strip control chars; React escapes everything else on render.
-  return s.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, max);
+  // Strip control chars (U+0000–U+001F and U+007F); React escapes everything else on render.
+  // Written as "anything outside the printable ranges" so the pattern holds no control character.
+  return s.replace(CONTROL_CHARS, "").slice(0, max);
 }
 
 export function BillProvider({ children }: { children: ReactNode }) {
