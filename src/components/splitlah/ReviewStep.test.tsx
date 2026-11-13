@@ -191,7 +191,7 @@ describe("ReviewStep: the photo was only partly read (D14)", () => {
   beforeEach(() => localStorage.clear());
   const TITLE = "The photo was only partly read";
   const NO_TOTAL = `SAMPLE CAFE
-Flat White      1    5.50
+Flat White      1    5.60
 Banana Bread    1    4.20`;
 
   it("warns when no total was read, and stops once the user types the total in", async () => {
@@ -200,7 +200,7 @@ Banana Bread    1    4.20`;
     expect(screen.getByText(TITLE)).toBeInTheDocument();
     expect(screen.getByText(/No total was read from the photo/)).toBeInTheDocument();
     expect(screen.getByText(/Retake the\s+photo, or add the missing items/)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText(/Receipt total/), { target: { value: "9.70" } });
+    fireEvent.change(screen.getByLabelText(/Receipt total/), { target: { value: "9.80" } });
     expect(screen.queryByText(TITLE)).not.toBeInTheDocument();
   });
 
