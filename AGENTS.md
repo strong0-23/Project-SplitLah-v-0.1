@@ -22,6 +22,7 @@
   - Engine lifecycle: `scanReceipt` leases the engine from `engine-pool.ts`, which keeps it loaded between scans and disposes it after 3 min idle, on `pagehide`, on engine change and on any error/cancel/timeout. Engine factories passed to `scanReceipt` must be stable functions (the pool reuses by factory identity); adapters must allow repeated `recognize` calls after one `load`.
   - OCR engines sit behind the `OcrEngine` interface in `types.ts` (load / recognize / terminate, word boxes out). Tesseract is the default; another on-device engine is added as a new adapter with no parser change. Recognition stays on the device: never upload images or add a cloud OCR/vision API.
   - Receipt vocabulary (charge, tax, total, payment terms) goes in `lexicon.ts`, not the parser.
+  - Quantities: a bare number next to a name is a quantity only with evidence: a Qty heading or unit × number = total (D7), or a printed item count that the quantities add up to exactly, all or nothing (D15, run after the anchor). Never take some of the numbers.
 - Scanning (src/lib/scan), persistence (src/lib/storage.ts) and state (src/hooks/use-bill.tsx) stay separate modules; only structured, schema-versioned data is persisted — never images.
 - Wizard step lives in the `?step=` search param so browser back/forward works while edits persist in shared state.
 - Tesseract.js is dynamically imported inside the Tesseract adapter's `load` (src/lib/scan/tesseract-engine.ts) so it never enters the SSR/initial bundle.

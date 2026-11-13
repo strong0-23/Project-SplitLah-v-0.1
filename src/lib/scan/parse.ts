@@ -11,7 +11,15 @@
 import { newId } from "../ids";
 import { DEFAULT_GST_BP, emptyReceipt } from "../defaults";
 import type { Receipt, ReceiptItem } from "../types";
-import { letterCount, NO_QTY_COLUMNS, readItemRow, splitItemLabel, type QtyColumns } from "./items";
+import {
+  letterCount,
+  NO_QTY_COLUMNS,
+  quantitiesByItemCount,
+  readItemRow,
+  splitItemLabel,
+  type BareNumber,
+  type QtyColumns,
+} from "./items";
 import {
   ADDRESS,
   CHANGE_LABEL,
@@ -20,6 +28,7 @@ import {
   INCLUSIVE_NOTE,
   isFinancialNote,
   ITEM_HEADER,
+  itemCountOf,
   mixedTaxBasis,
   MODIFIER,
   NOT_A_NOTE,
@@ -302,7 +311,43 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
   const itemAt = new Map<ReceiptItem, { line: number; section: Section }>();
   /** Short review reason per flagged item. */
   const reasons = new Map<ReceiptItem, string>();
+  /** D15: printed item counts ("Total Qty 7"), as printed. */
+  const itemCounts: string[] = [];
+  /** D15: rows with a bare number D7 left in the name, and how to take it out again. */
+  const bareRows = new Map<
+    ReceiptItem,
+    {
+      value: number;
+      ok: boolean;
+      descAtPush: string;
+      descWithout: string;
+      taxMarked: boolean;
+      otherDoubt: boolean;
+    }
+  >();
+  /** Items flagged after they were read (repaired digit, discount): D15 never clears those. */
+  const flaggedElsewhere = new Set<ReceiptItem>();
+  /** D15: rows whose name carries a bare number D15 can't place: with any of them, D15 is off. */
+  const bareBlocked = new Set<ReceiptItem>();
+  const noteBare = (
+    item: ReceiptItem,
+    b: BareNumber | null,
+    otherDoubt: boolean,
+    prefix: readonly string[] = [],
+  ) => {
+    if (!b || b.value < 1 || b.value > 99) return; // not a quantity candidate: stays in the name
+    bareRows.set(item, {
+      value: b.value,
+      // The number must sit at an end of the whole name, and the name must not be cut short.
+      ok: !b.bothEnds && !(b.at === "start" && prefix.length) && item.description.length < 80,
+      descAtPush: item.description,
+      descWithout: [...prefix, b.descWithout].join(" ").slice(0, 80),
+      taxMarked: b.taxMarked,
+      otherDoubt,
+    });
+  };
   const flag = (item: ReceiptItem, reason: string) => {
+    flaggedElsewhere.add(item);
     item.flagged = true;
     if (!reasons.has(item)) reasons.set(item, reason);
   };
@@ -388,6 +433,9 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
         continue;
       }
     }
+    // D15: the printed number of items sold. On a line with money only when it is a total line.
+    const countText = !l.amounts.length || /^total\b/i.test(l.words) ? itemCountOf(l.words) : null;
+    if (countText !== null) itemCounts.push(countText);
     // "Total Qty 3   20.00": an item count on a total line that also prints money is a total.
     if (l.kind === "count" && l.amounts.length && /^total\b/i.test(l.words)) l.kind = "total";
     openItem = null;
@@ -553,6 +601,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
             false,
           );
           reasons.set(last()!, REASON.quantity);
+          noteBare(last()!, s.bareNumber, true);
           if (s.taxMarked) anyTaxMarked = true;
           noteRepair(next.amounts, null, last());
           uncertain.add("items");
@@ -800,6 +849,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
       // would be wrong, so none is inferred and the row is checked (parser-v2).
       if (!row.qtyObserved) row.quantity = 1;
       row.uncertain = true;
+      row.otherDoubt = true;
       mixedBasisRows++;
     }
     if (amt.negative && section !== "header") {
@@ -880,6 +930,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
       continue;
     }
 
+    let bareElsewhere = false;
     if (!ownName) {
       if (!pendingName) {
         skipped.push(l.text);
@@ -887,6 +938,9 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
       }
       const s = splitItemLabel(pendingName);
       row.desc = s.desc.slice(0, 80);
+      // D15 reads a bare number only on a row that prints its own name and amount.
+      bareElsewhere = !!(s.bareNumber || row.bareNumber);
+      row.bareNumber = null;
       row.taxMarked ||= s.taxMarked;
       row.uncertain = (row.uncertain && letterCount(s.desc) < 4) || row.unitPriceOnlyCents !== null;
       if (s.qtyObserved && s.quantity > 1 && row.quantity === 1) {
@@ -895,6 +949,7 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
       }
     }
     pendingName = null;
+    const prefix = wrapPrefix;
     if (wrapPrefix.length) {
       row.desc = [...wrapPrefix, row.desc].join(" ").slice(0, 80);
       wrapPrefix = [];
@@ -922,6 +977,8 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
     );
     if (row.uncertain) reasons.set(item, REASON.quantity);
     if (row.unitPriceOnlyCents !== null) reasons.set(item, REASON.noPrice);
+    noteBare(item, row.bareNumber, row.otherDoubt, prefix);
+    if (bareElsewhere) bareBlocked.add(item);
     noteRepair(l.amounts, null, item);
     if (row.unitPriceOnlyCents !== null) {
       uncertain.add("items");
@@ -1211,6 +1268,45 @@ export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\
         );
       }
     }
+  }
+
+  // D15: quantities confirmed by the printed item count, after the anchor so rows it set aside
+  // are not counted. Line totals don't change; all or nothing (items.ts quantitiesByItemCount).
+  const confirmed = quantitiesByItemCount(
+    r.items.map((it) => {
+      const b = bareRows.get(it);
+      return {
+        quantity: it.quantity,
+        lineTotalCents: it.lineTotalCents,
+        bare: bareBlocked.has(it)
+          ? { value: 0, ok: false }
+          : b
+            ? { value: b.value, ok: b.ok && it.description.startsWith(b.descAtPush) }
+            : null,
+      };
+    }),
+    itemCounts,
+  );
+  if (confirmed) {
+    let taken = 0;
+    r.items.forEach((it, k) => {
+      const b = bareRows.get(it);
+      if (!b) return;
+      taken++;
+      it.quantity = confirmed[k]!;
+      it.description = `${b.descWithout}${it.description.slice(b.descAtPush.length)}`.slice(0, 80);
+      if (b.taxMarked) anyTaxMarked = true;
+      if (reasons.get(it) !== REASON.quantity) return; // flagged for another reason (header, …)
+      if (b.otherDoubt || flaggedElsewhere.has(it)) reasons.set(it, REASON.check);
+      else {
+        it.flagged = false; // the D7 flag: the number is now a confirmed quantity
+        reasons.delete(it);
+      }
+    });
+    // Never silent: say where the quantities came from.
+    warnings.push(
+      `${taken === 1 ? "A number next to an item name was" : `Numbers next to ${taken} item names were`} read as ${taken === 1 ? "its quantity" : "their quantities"}, because the quantities then add up to the printed item count (${itemCounts[0]}). Check them.`,
+    );
   }
 
   if (mixedBasisRows) {

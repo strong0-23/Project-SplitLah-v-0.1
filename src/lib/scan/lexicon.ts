@@ -226,6 +226,24 @@ export function classifyLabel(label: string): LineKind | null {
 }
 
 /**
+ * D15: the printed number of items sold ("Total Qty 7", "Total 5 items", "Items: 3",
+ * "No. of items 4", "Jumlah barang 2", "Anzahl Artikel 3", "Nombre d'articles 3"). Returns the
+ * number as printed (it may not be whole: the parser checks), or null when the label is not an
+ * item count. Matched on the whole label with its delimiters, so a product name ("ITEM 7 COMBO")
+ * or a per-row "Qty 2" is never read as a count; "Pax" counts people, not items.
+ */
+const COUNT_NUM = String.raw`\s*[:#=]?\s*(\d+(?:[.,]\d+)?)`;
+const COUNT_WORDS = String.raw`(?:total\s*(?:qty|quantity|items?|item\s*count|pcs|pieces|articles?|art(?:í|i)culos|articoli|artikel)|items|item\s*count|no\.?\s*of\s*items?|number\s*of\s*items?|jumlah\s*(?:item|barang)|bilangan\s*(?:item|barang)|anzahl\s*artikel|artikelanzahl|nombre\s*d['’]?\s*articles|nb\.?\s*(?:d['’]?\s*)?articles|n(?:ú|u)mero\s*de\s*art(?:í|i)culos|cantidad\s*de\s*art(?:í|i)culos|numero\s*(?:di\s*)?articoli|totale\s*articoli|aantal\s*(?:artikelen|artikels|items))`;
+const ITEM_COUNT = new RegExp(
+  String.raw`^${COUNT_WORDS}${COUNT_NUM}$|^total${COUNT_NUM}\s*(?:items?|pcs|pieces|qty|articles?|artikel|articoli|art(?:í|i)culos)$`,
+  "i",
+);
+export function itemCountOf(label: string): string | null {
+  const m = ITEM_COUNT.exec(label.trim());
+  return m ? (m[1] ?? m[2] ?? null) : null;
+}
+
+/**
  * Words that never belong in an item note (P1): summary, payment, date/time and transaction
  * vocabulary. Checked on the repaired label, as whole words.
  */
