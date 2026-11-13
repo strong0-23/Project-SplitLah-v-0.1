@@ -375,6 +375,45 @@ come back after a reload.
 
 ## Work-order rules (decided under the owner's delegation, 12 Nov 2026)
 
+### D14: printed text reaches the parser: crop safety, orientation, partly-read warning (WO-001)
+**Rule.** Three general rules in the image preparation, and one review warning.
+1. **A crop never cuts the paper.** After `detectPaperBounds` finds the paper with a global
+   threshold, the row run is widened while the strip beyond each end is still paper: its middle part
+   is at least 1.5× as bright as the background beside the crop in the same rows, and at least 24
+   grey levels brighter (`PAPER_RATIO`, `PAPER_MIN_STEP`). Short gaps (a fold, a dense row of text)
+   are tolerated. Where no background beside the paper can be measured (the paper fills the width),
+   nothing proves the rows are background, so the crop is dropped on that side. If the widened
+   region covers almost the whole photo, there is no crop (as before). The 1.5% margin is unchanged.
+2. **An upside-down probe does not end the orientation search.** A probe ends the search early only
+   when it has at least 12 confident wide words AND those are at least 35% of the longer words it
+   read (`orientationSettled`). Otherwise the remaining rotations are probed and the best score wins,
+   as before. Upright photos still stop after one probe.
+3. **The second pass is unchanged.** A rule that kept the first reading when the second read fewer
+   amounts was measured and not adopted (see "Why").
+4. **The review screen says when a photo was only partly read.** After recognition, the rows that
+   hold print on the prepared image (`inkRowProfile`: ink-dark pixels in the middle 80% of a row)
+   are compared with the rows the chosen reading's words cover. When 35% or more of the printed
+   rows have no word (`PARTLY_READ_SHARE`), `scanReceipt` puts `PARTLY_READ_NOTE` first in the
+   receipt's existing `ocrWarnings`. The review screen shows "The photo was only partly read" for
+   that note, or when no total was read from the stored `rawOcrText` and none has been typed in
+   (derived again, D13). It asks the user to retake the photo or add the missing items and total.
+**Why.** On the development receipts the stored readings lost printed text before the parser saw
+it: a shadow band ended the crop after the first item rows; a probe of upside-down text scored 15
+confident words and stopped the search at the wrong rotation (the upright probe scored 123). These
+are general photo conditions, not features of one receipt. Keeping the first reading when the
+second read fewer amounts restored the missing amounts on two receipts but cost each one
+correction (the fuller reading carried extra rows), so it was not kept. Flattening variants
+(a mean that leaves dark pixels out, the brightest colour channel) gave no consistent gain and were
+not adopted; the existing flattening already holds across the shadow edge once the crop keeps the
+paper. The warning cannot be stored as a new field (D13), so it rides in the warnings the receipt
+already keeps, like the D6 fees note.
+**Where.** `image.ts` (`widenRowsToPaper`, `detectPaperBounds`, `inkRowProfile`,
+`unreadPrintShare`), `canvas.ts` (`inkRows`), `scan.ts` (`orientationSettled`,
+`readingLooksPartial`, `OcrResult.partlyRead`), `index.ts`, `review.ts` (`PARTLY_READ_NOTE`,
+`readingIncomplete`, `ReviewHints.noTotalRead`), `ReviewStep.tsx`; measured with
+`tools/receipt-regression/coverage.ts` and `dev-run.mjs`; report
+`docs/reports/2026-11-wo001-reading-coverage.md`.
+
 ### D15: a quantity confirmed by the receipt's printed item count (WO-002)
 **Rule.** When the receipt prints how many items were sold ("Total Qty 7", "Total 5 items",
 "Items: 3", "No. of items 4", and the Malay/Indonesian, German, French, Spanish, Italian and Dutch

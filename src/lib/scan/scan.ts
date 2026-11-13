@@ -8,6 +8,7 @@ import {
   autoCrop,
   decodeImage,
   flattenCanvas,
+  inkRows,
   MAX_PIXELS,
   PROBE_PIXELS,
   render,
@@ -15,6 +16,7 @@ import {
   toBlob,
 } from "./canvas";
 import { singleUseLease, type EnginePool } from "./engine-pool";
+import { PARTLY_READ_SHARE, unreadPrintShare } from "./image";
 import { pageToLines } from "./layout";
 import { createTesseractEngine } from "./tesseract-engine";
 import {
@@ -46,6 +48,11 @@ export interface OcrResult {
   crop: CropFractions | null;
   passes: number;
   engine: string;
+  /**
+   * The chosen reading left a large share of the printed rows without any word (D14): the photo
+   * was probably only partly read. False when the engine gives no word positions.
+   */
+  partlyRead: boolean;
 }
 
 /** Score supplied by the caller (keeps parsing out of this module). good=true skips the fallback pass. */
@@ -61,14 +68,46 @@ export interface ScanDeps {
   pool?: EnginePool;
 }
 
+const longWord = (w: OcrPage["words"][number]) => w.text.replace(/[^A-Za-z0-9]/g, "").length >= 3;
+
 /** Counts confident, horizontal real words. Sideways text yields few, tall boxes. Pure. */
 export function orientationScore(page: OcrPage): number {
   return page.words.filter(
-    (w) =>
-      w.confidence > 70 &&
-      w.text.replace(/[^A-Za-z0-9]/g, "").length >= 3 &&
-      w.bbox.x1 - w.bbox.x0 > w.bbox.y1 - w.bbox.y0,
+    (w) => w.confidence > 70 && longWord(w) && w.bbox.x1 - w.bbox.x0 > w.bbox.y1 - w.bbox.y0,
   ).length;
+}
+
+/**
+ * Did this reading leave much of the printed area unread (D14)? Compares the rows that hold print on
+ * the prepared image with the rows covered by recognised words. Pure.
+ */
+export function readingLooksPartial(inkRowsOfImage: Uint8Array, page: OcrPage): boolean {
+  const words = page.words.filter((w) => w.confidence > 30 && w.text.trim().length > 0);
+  if (!words.length) return false;
+  return (
+    unreadPrintShare(
+      inkRowsOfImage,
+      words.map((w) => w.bbox),
+    ) >= PARTLY_READ_SHARE
+  );
+}
+
+/** A probe this good may end the orientation search early (with `ORIENT_EARLY_SHARE`). */
+export const ORIENT_EARLY_SCORE = 12;
+/** Share of a probe's longer words that must be confident before the search stops early. */
+export const ORIENT_EARLY_SHARE = 0.35;
+
+/**
+ * May the orientation search stop at this probe (D14)? Upside-down text still gives some confident,
+ * wide words (often a dozen or more on a long receipt), but only as a small share of the words read;
+ * upright text gives a large share. So a probe stops the search only when it has enough confident
+ * words AND they are a fair share of its longer words; otherwise the remaining rotations are probed
+ * and the best score wins. Pure.
+ */
+export function orientationSettled(page: OcrPage): boolean {
+  const score = orientationScore(page);
+  const long = page.words.filter(longWord).length;
+  return score >= ORIENT_EARLY_SCORE && score >= ORIENT_EARLY_SHARE * long;
 }
 
 export async function runOcr(
@@ -220,14 +259,13 @@ export async function runOcr(
         const rot = cands[i]!;
         range = [0.25 + (0.2 * i) / cands.length, 0.25 + (0.2 * (i + 1)) / cands.length];
         report("Checking orientation", 0);
-        const score = orientationScore(
-          await recognize(
-            flattenCanvas(render(bitmap, rot, autoCrop(bitmap, rot), PROBE_PIXELS)),
-            "block",
-          ),
+        const probe = await recognize(
+          flattenCanvas(render(bitmap, rot, autoCrop(bitmap, rot), PROBE_PIXELS)),
+          "block",
         );
+        const score = orientationScore(probe);
         if (score > best.score) best = { rot, score };
-        if (score >= 12) break;
+        if (orientationSettled(probe)) break;
       }
       if (best.score < 3)
         throw new OcrError(
@@ -268,8 +306,9 @@ export async function runOcr(
         "recognize",
         "No text was found. Rotate the photo so the text is upright, crop to the receipt, or retake it in better light.",
       );
+    const partlyRead = page.words.length > 0 && readingLooksPartial(inkRows(full), page);
     succeeded = true;
-    return { lines, text: page.text, rotation, crop, passes, engine: engine.name };
+    return { lines, text: page.text, rotation, crop, passes, engine: engine.name, partlyRead };
   } finally {
     clearTimeout(timer);
     signal.removeEventListener("abort", onAbort);

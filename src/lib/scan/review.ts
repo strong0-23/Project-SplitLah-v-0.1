@@ -23,9 +23,36 @@ export interface ReviewHints {
   setAside: SetAsideRow[];
   /** Reason per flagged item, by `rowKey`. */
   reasons: ReadonlyMap<string, string>;
+  /** The scanned text holds no printed total the parser could read (D14). */
+  noTotalRead: boolean;
 }
 
-const NONE: ReviewHints = { setAside: [], reasons: new Map() };
+const NONE: ReviewHints = { setAside: [], reasons: new Map(), noTotalRead: false };
+
+/**
+ * Scan warning added when the reading left much of the printed area unread (D14). It goes in the
+ * receipt's existing `ocrWarnings`, like the D6 fees note, so nothing new is stored.
+ */
+export const PARTLY_READ_NOTE =
+  "Part of the receipt could not be read. Check that every item is listed.";
+
+/** True when a scan reported that the photo was only partly read. */
+export function hasPartlyReadNote(ocrWarnings: readonly string[] | null | undefined): boolean {
+  return !!ocrWarnings?.includes(PARTLY_READ_NOTE);
+}
+
+/**
+ * Should the review screen warn that the photo was only partly read (D14)? Yes when the scan said
+ * so, or when no total was read from the text and the user has not typed one in yet. Pure.
+ */
+export function readingIncomplete(
+  receipt: { ocrWarnings?: string[] | undefined; receiptTotalCents: number | null },
+  hints: Pick<ReviewHints, "noTotalRead">,
+): { partly: boolean; noTotal: boolean } | null {
+  const partly = hasPartlyReadNote(receipt.ocrWarnings);
+  const noTotal = hints.noTotalRead && receipt.receiptTotalCents === null;
+  return partly || noTotal ? { partly, noTotal } : null;
+}
 
 export function reviewHints(rawOcrText: string | null | undefined): ReviewHints {
   if (!rawOcrText) return NONE;
@@ -36,5 +63,5 @@ export function reviewHints(rawOcrText: string | null | undefined): ReviewHints 
     const key = rowKey(it);
     if (reason && !reasons.has(key)) reasons.set(key, reason);
   });
-  return { setAside: res.setAside, reasons };
+  return { setAside: res.setAside, reasons, noTotalRead: res.receipt.receiptTotalCents === null };
 }

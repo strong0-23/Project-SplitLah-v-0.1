@@ -4,7 +4,13 @@ import { sanitizeText, useBill } from "@/hooks/use-bill";
 import { computeTotals } from "@/lib/bill";
 import { newId } from "@/lib/ids";
 import { formatMoney, formatRate, MAX_QUANTITY, parseRate } from "@/lib/money";
-import { hasFoldedFees, reviewHints, rowKey } from "@/lib/scan";
+import {
+  hasFoldedFees,
+  PARTLY_READ_NOTE,
+  readingIncomplete,
+  reviewHints,
+  rowKey,
+} from "@/lib/scan";
 import type { ItemAssignment, ReceiptItem } from "@/lib/types";
 import { Button, Card, Label, MoneyInput, Notice, Segmented, Toggle } from "./ui";
 import { Shell } from "./Shell";
@@ -206,6 +212,9 @@ export function ReviewStep({ go }: { go: (s: "scan" | "split") => void }) {
     }));
     setRestored((m) => new Map(m).set(at, id));
   };
+  // D14: the photo was only partly read (said by the scan, or no total was read from the text).
+  const incomplete = readingIncomplete(r, hints);
+  const otherWarnings = (r.ocrWarnings ?? []).filter((w) => w !== PARTLY_READ_NOTE);
   const totals = computeTotals(r);
   const set = (patch: Partial<typeof r>) => setReceipt((x) => ({ ...x, ...patch }));
   const flagged = (f: string) => r.uncertainFields?.includes(f);
@@ -230,6 +239,15 @@ export function ReviewStep({ go }: { go: (s: "scan" | "split") => void }) {
       }
     >
       <h1 className="text-2xl font-bold">Review receipt</h1>
+      {incomplete && (
+        <Notice tone="warning" title="The photo was only partly read">
+          {incomplete.partly
+            ? "Part of the printed receipt was not read"
+            : "No total was read from the photo"}
+          {incomplete.partly && incomplete.noTotal ? ", and no total was found" : ""}. Retake the
+          photo, or add the missing items and the total.
+        </Notice>
+      )}
       {totals.ok && mismatch !== null && mismatch !== 0 && r.receiptTotalCents !== null && (
         <Notice
           tone="warning"
@@ -239,10 +257,10 @@ export function ReviewStep({ go }: { go: (s: "scan" | "split") => void }) {
           {formatMoney(r.receiptTotalCents)}.
         </Notice>
       )}
-      {r.ocrWarnings && r.ocrWarnings.length > 0 && (
+      {otherWarnings.length > 0 && (
         <Notice tone="warning" title="Check the scanned details">
           <ul className="list-disc pl-4">
-            {r.ocrWarnings.map((w, i) => (
+            {otherWarnings.map((w, i) => (
               <li key={i}>{w}</li>
             ))}
           </ul>

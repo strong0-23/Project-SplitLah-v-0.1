@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LOAD_TIMEOUT_MS, SCAN_TIMEOUT_MS, runOcr } from "./scan";
-import { OcrCancelled, OcrError, type OcrEngine } from "./types";
+import {
+  LOAD_TIMEOUT_MS,
+  SCAN_TIMEOUT_MS,
+  orientationSettled,
+  readingLooksPartial,
+  runOcr,
+} from "./scan";
+import { OcrCancelled, OcrError, type OcrEngine, type OcrPage, type OcrWord } from "./types";
 
 const mocks = vi.hoisted(() => ({ createWorker: vi.fn() }));
 vi.mock("tesseract.js", () => ({ createWorker: mocks.createWorker, OEM: { LSTM_ONLY: 1 } }));
@@ -191,5 +197,89 @@ describe("per-engine load limit (OcrEngine.loadTimeoutMs)", () => {
     );
     await vi.advanceTimersByTimeAsync(LOAD_TIMEOUT_MS + 1000);
     expect(box.v).toMatchObject({ stage: "load" });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// WO-001 (D14): orientation and the partly-read check. Synthetic word boxes only.
+
+const word = (text: string, confidence: number, y = 0, wide = true): OcrWord => ({
+  text,
+  confidence,
+  bbox: { x0: 0, y0: y, x1: wide ? 60 : 10, y1: y + 20 },
+});
+/** `confident` wide words with confidence 90, plus `doubtful` long words with confidence 20. */
+const probePage = (confident: number, doubtful: number): OcrPage => ({
+  text: "",
+  words: [
+    ...Array.from({ length: confident }, () => word("SAMPLE", 90)),
+    ...Array.from({ length: doubtful }, () => word("XQZW", 20)),
+  ],
+});
+
+describe("orientation (D14)", () => {
+  it("stops early on an upright probe: many confident words, a large share of those read", () => {
+    expect(orientationSettled(probePage(60, 20))).toBe(true);
+  });
+
+  it("does not stop on an upside-down probe: some confident words, but a small share", () => {
+    // Upside-down text on a long receipt still gives a dozen or more confident words.
+    expect(orientationSettled(probePage(15, 100))).toBe(false);
+  });
+
+  it("does not stop on too few confident words, whatever their share", () => {
+    expect(orientationSettled(probePage(8, 0))).toBe(false);
+  });
+
+  it("keeps probing past an upside-down first probe and picks the upright rotation", async () => {
+    setup();
+    const probes = [probePage(15, 100), probePage(60, 20)];
+    let calls = 0;
+    const engine: OcrEngine = {
+      name: "fake",
+      load: vi.fn(async () => undefined),
+      recognize: vi.fn(async () =>
+        calls < probes.length ? probes[calls++]! : { text: "TOTAL 1.00", words: [] },
+      ),
+      terminate: vi.fn(async () => undefined),
+    };
+    const res = await runOcr(
+      file,
+      { rotation: null, crop: null },
+      vi.fn(),
+      new AbortController().signal,
+      { ...deps, createEngine: () => engine },
+    );
+    expect(res.rotation).toBe(180); // the second candidate for a square/portrait photo
+  });
+});
+
+describe("partly-read check (D14)", () => {
+  // 20 printed rows of 10 pixel rows each (every other band), 400 rows in all.
+  const ink = new Uint8Array(400).map((_, y) => (Math.floor(y / 10) % 2 === 0 ? 1 : 0));
+  const read = (bands: number): OcrPage => ({
+    text: "",
+    words: Array.from({ length: bands }, (_, i) => ({
+      text: "WORD",
+      confidence: 90,
+      bbox: { x0: 0, y0: i * 20, x1: 50, y1: i * 20 + 10 },
+    })),
+  });
+
+  it("is quiet when the words cover the printed rows", () => {
+    expect(readingLooksPartial(ink, read(20))).toBe(false);
+  });
+
+  it("fires when the reading stops early on the printed page", () => {
+    expect(readingLooksPartial(ink, read(3))).toBe(true);
+  });
+
+  it("ignores blank and very doubtful words, and an engine without word boxes", () => {
+    const blanks: OcrPage = {
+      text: "",
+      words: read(20).words.map((w, i) => ({ ...w, text: i < 17 ? " " : w.text })),
+    };
+    expect(readingLooksPartial(ink, blanks)).toBe(true);
+    expect(readingLooksPartial(ink, { text: "x", words: [] })).toBe(false);
   });
 });

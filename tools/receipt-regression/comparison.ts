@@ -18,6 +18,7 @@
  * - Summaries from before the removal that name `paddle` are reported as unreadable lines.
  */
 import { MAX_CORRECTIONS, type Corrections } from "./corrections";
+import { coverageShare, type Coverage } from "./coverage";
 
 export type EngineId = "tesseract";
 export const ENGINES: readonly EngineId[] = ["tesseract"];
@@ -41,6 +42,13 @@ export interface ReceiptEngineResult {
   stable: boolean | null;
   /** The owner's photo-condition tags for this receipt (sanitised words), for the breakdown. */
   tags?: string[] | undefined;
+  /**
+   * Reading coverage of the first scan (coverage.ts): how many of the reference's printed amounts
+   * appear in the OCR text. A count only; null/absent when not measured.
+   */
+  coverage?: Coverage | null | undefined;
+  /** Did the review screen warn that the photo was only partly read (D14)? Absent: not measured. */
+  incomplete?: boolean | undefined;
 }
 
 export interface RunInfo {
@@ -198,7 +206,18 @@ export function receiptLine(r: ReceiptEngineResult): string {
     `warm-ms=${msList(r.warmMs)}`,
     `stable=${r.stable === null ? "-" : r.stable ? "yes" : "no"}`,
     `tags=${r.tags?.length ? cleanTags(r.tags).join(",") || "-" : "-"}`,
+    `coverage=${r.coverage ? `${r.coverage.found}/${r.coverage.of}` : "-"}`,
+    `incomplete=${r.incomplete === undefined ? "-" : r.incomplete ? "yes" : "no"}`,
   ].join(" | ");
+}
+
+/** `found/of` from a summary line; null when absent or malformed. */
+function coverageOf(v: string | undefined): Coverage | null {
+  const m = /^(\d{1,4})\/(\d{1,4})$/.exec(v ?? "");
+  if (!m) return null;
+  const found = Number(m[1]);
+  const of = Number(m[2]);
+  return found <= of ? { found, of } : null;
 }
 
 /** Per-receipt field breakdown: development runs only (held-out runs show aggregates only). */
@@ -307,6 +326,9 @@ export function parseSummaries(text: string): Parsed {
         warmMs: numList(f.get("warm-ms")),
         stable: stable === "yes" ? true : stable === "no" ? false : null,
         tags: cleanTags((f.get("tags") ?? "").split(",").filter((t) => t && t !== "-")),
+        coverage: coverageOf(f.get("coverage")),
+        incomplete:
+          f.get("incomplete") === "yes" ? true : f.get("incomplete") === "no" ? false : undefined,
       });
     }
   });
@@ -337,6 +359,11 @@ export interface EngineAggregate {
   sessionColdMs: number | null;
   firstMedianMs: number | null;
   warmMedianMs: number | null;
+  /**
+   * Median reading coverage (0..1) over the receipts with a measured coverage; a failed scan of a
+   * receipt that has reference amounts counts as 0. null when nothing was measured.
+   */
+  coverageMedian: number | null;
   fields: Omit<Corrections, "total">;
 }
 
@@ -375,6 +402,12 @@ export function aggregate(run: DesktopRun, engine: EngineId): EngineAggregate {
     firstMedianMs: median(first),
     warmMedianMs:
       run.info.warmRuns > 0 ? median(warm.filter((x): x is number => x !== null)) : null,
+    coverageMedian: median(
+      rows.flatMap((r) => {
+        const s = coverageShare(r.coverage);
+        return s === null ? [] : [r.status === "ok" ? s : 0];
+      }),
+    ),
     fields: fieldsSum,
   };
 }
@@ -395,7 +428,7 @@ export function conditionLines(run: DesktopRun): string[] {
 
 /** One engine's aggregate line: within-2 share, silent errors, failures and timings. */
 export function engineLine(a: EngineAggregate): string {
-  return `engine | engine=${a.engine} | within-2=${share(a.within, a.receipts)} | silent=${a.silent} | failed=${a.failed} | unstable=${a.unstable} | session-cold=${secs(a.sessionColdMs)} | first-median=${secs(a.firstMedianMs)} | warm-median=${secs(a.warmMedianMs)}`;
+  return `engine | engine=${a.engine} | within-2=${share(a.within, a.receipts)} | silent=${a.silent} | failed=${a.failed} | unstable=${a.unstable} | session-cold=${secs(a.sessionColdMs)} | first-median=${secs(a.firstMedianMs)} | warm-median=${secs(a.warmMedianMs)}${a.coverageMedian === null ? "" : ` | coverage-median=${(100 * a.coverageMedian).toFixed(1)}%`}`;
 }
 
 export function aggregateLines(run: DesktopRun, heldOut: boolean): string[] {

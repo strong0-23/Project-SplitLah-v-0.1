@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { BillProvider, useBill } from "@/hooks/use-bill";
-import { parseReceiptText } from "@/lib/scan";
+import { PARTLY_READ_NOTE, parseReceiptText } from "@/lib/scan";
 import { ReviewStep } from "./ReviewStep";
 
 const WARNING = "Your receipt's delivery/platform fees will drop out if you calculate by %.";
@@ -27,21 +27,24 @@ Service Charge 10%    1.20
 GST 9%                1.19
 TOTAL                14.39`;
 
-function Scanned({ text }: { text: string }) {
+function Scanned({ text, partlyRead = false }: { text: string; partlyRead?: boolean }) {
   const { startFromReceipt } = useBill();
   const started = useRef(false);
   useEffect(() => {
     if (started.current) return; // load the scanned receipt once, as ScanStep does
     started.current = true;
-    startFromReceipt(parseReceiptText(text).receipt);
-  }, [startFromReceipt, text]);
+    const receipt = parseReceiptText(text).receipt;
+    // What scanReceipt adds when the photo was only partly read (D14).
+    if (partlyRead) receipt.ocrWarnings = [PARTLY_READ_NOTE, ...(receipt.ocrWarnings ?? [])];
+    startFromReceipt(receipt);
+  }, [startFromReceipt, text, partlyRead]);
   return <ReviewStep go={() => undefined} />;
 }
 
-const renderReview = (text: string) =>
+const renderReview = (text: string, partlyRead = false) =>
   render(
     <BillProvider>
-      <Scanned text={text} />
+      <Scanned text={text} partlyRead={partlyRead} />
     </BillProvider>,
   );
 
@@ -181,5 +184,38 @@ describe("ReviewStep: highlights and the total banner", () => {
     await screen.findByDisplayValue("Fish Burger");
     expect(screen.queryByText(/Doesn't match the receipt total/)).not.toBeInTheDocument();
     expect(screen.getByText("Matches the receipt total exactly.")).toBeInTheDocument();
+  });
+});
+
+describe("ReviewStep: the photo was only partly read (D14)", () => {
+  beforeEach(() => localStorage.clear());
+  const TITLE = "The photo was only partly read";
+  const NO_TOTAL = `SAMPLE CAFE
+Flat White      1    5.60
+Banana Bread    1    4.20`;
+
+  it("warns when no total was read, and stops once the user types the total in", async () => {
+    renderReview(NO_TOTAL);
+    await screen.findByDisplayValue(/Flat White/);
+    expect(screen.getByText(TITLE)).toBeInTheDocument();
+    expect(screen.getByText(/No total was read from the photo/)).toBeInTheDocument();
+    expect(screen.getByText(/Retake the\s+photo, or add the missing items/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/Receipt total/), { target: { value: "9.80" } });
+    expect(screen.queryByText(TITLE)).not.toBeInTheDocument();
+  });
+
+  it("warns when the scan said part of the printed receipt was not read, once", async () => {
+    renderReview(REPAIRED, true);
+    await screen.findByDisplayValue("Fish Burger");
+    expect(screen.getByText(TITLE)).toBeInTheDocument();
+    expect(screen.getByText(/Part of the printed receipt was not read/)).toBeInTheDocument();
+    // The scan note is shown in the banner, not repeated in the scanned-details list.
+    expect(screen.queryByText(PARTLY_READ_NOTE)).not.toBeInTheDocument();
+  });
+
+  it("stays quiet on a complete reading", async () => {
+    renderReview(REPAIRED);
+    await screen.findByDisplayValue("Fish Burger");
+    expect(screen.queryByText(TITLE)).not.toBeInTheDocument();
   });
 });
