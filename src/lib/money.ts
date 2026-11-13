@@ -7,7 +7,10 @@ export const MAX_QUANTITY = 9_999;
 /** Parse a user/OCR decimal string into integer cents without floating point. null if invalid. */
 export function parseMoney(input: string): Cents | null {
   if (typeof input !== "string") return null;
-  const s = input.trim().replace(/^S?\$\s*/i, "").replace(/,/g, "");
+  const s = input
+    .trim()
+    .replace(/^S?\$\s*/i, "")
+    .replace(/,/g, "");
   if (s === "") return null;
   const m = /^(\d{1,7})(?:\.(\d{0,2}))?$/.exec(s) ?? /^()\.(\d{1,2})$/.exec(s);
   if (!m) return null;
@@ -90,7 +93,9 @@ export function allocateLargestRemainder(total: Cents, weights: Weighted[]): Rec
     return { id: w.id, rem: p % sum };
   });
   let left = Number(T - given);
-  rems.sort((a, b) => (a.rem === b.rem ? (a.id < b.id ? -1 : a.id > b.id ? 1 : 0) : a.rem > b.rem ? -1 : 1));
+  rems.sort((a, b) =>
+    a.rem === b.rem ? (a.id < b.id ? -1 : a.id > b.id ? 1 : 0) : a.rem > b.rem ? -1 : 1,
+  );
   for (let i = 0; left > 0; i++, left--) {
     const r = rems[i];
     if (!r) break;
