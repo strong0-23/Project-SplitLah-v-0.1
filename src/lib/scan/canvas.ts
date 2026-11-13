@@ -3,7 +3,7 @@
  * Pixel maths lives in ./image (pure, testable); this file only moves pixels in and out of canvases.
  * Images stay in memory and are never uploaded or persisted.
  */
-import { detectPaperBounds, flattenIllumination } from "./image";
+import { detectPaperBounds, flattenIllumination, inkRowProfile } from "./image";
 import { OcrError, type CropFractions, type Rotation, type ScanOptions } from "./types";
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -172,6 +172,12 @@ export function flattenCanvas(canvas: HTMLCanvasElement): HTMLCanvasElement {
   prepared.data.set(out.data);
   ctx.putImageData(prepared, 0, 0);
   return canvas;
+}
+
+/** Which rows of a flattened canvas hold print (`inkRowProfile`). */
+export function inkRows(canvas: HTMLCanvasElement): Uint8Array {
+  const img = canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height);
+  return inkRowProfile({ data: img.data, width: img.width, height: img.height });
 }
 
 /** Auto-detects the paper region in the oriented image as crop fractions (null = no clear edge). */

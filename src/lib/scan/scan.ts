@@ -8,6 +8,7 @@ import {
   autoCrop,
   decodeImage,
   flattenCanvas,
+  inkRows,
   MAX_PIXELS,
   PROBE_PIXELS,
   render,
@@ -15,6 +16,7 @@ import {
   toBlob,
 } from "./canvas";
 import { singleUseLease, type EnginePool } from "./engine-pool";
+import { PARTLY_READ_SHARE, unreadPrintShare } from "./image";
 import { pageToLines } from "./layout";
 import { createTesseractEngine } from "./tesseract-engine";
 import {
@@ -46,6 +48,11 @@ export interface OcrResult {
   crop: CropFractions | null;
   passes: number;
   engine: string;
+  /**
+   * The chosen reading left a large share of the printed rows without any word (D14): the photo
+   * was probably only partly read. False when the engine gives no word positions.
+   */
+  partlyRead: boolean;
 }
 
 /** Score supplied by the caller (keeps parsing out of this module). good=true skips the fallback pass. */
@@ -68,6 +75,21 @@ export function orientationScore(page: OcrPage): number {
   return page.words.filter(
     (w) => w.confidence > 70 && longWord(w) && w.bbox.x1 - w.bbox.x0 > w.bbox.y1 - w.bbox.y0,
   ).length;
+}
+
+/**
+ * Did this reading leave much of the printed area unread (D14)? Compares the rows that hold print on
+ * the prepared image with the rows covered by recognised words. Pure.
+ */
+export function readingLooksPartial(inkRowsOfImage: Uint8Array, page: OcrPage): boolean {
+  const words = page.words.filter((w) => w.confidence > 30 && w.text.trim().length > 0);
+  if (!words.length) return false;
+  return (
+    unreadPrintShare(
+      inkRowsOfImage,
+      words.map((w) => w.bbox),
+    ) >= PARTLY_READ_SHARE
+  );
 }
 
 /** A probe this good may end the orientation search early (with `ORIENT_EARLY_SHARE`). */
@@ -284,8 +306,9 @@ export async function runOcr(
         "recognize",
         "No text was found. Rotate the photo so the text is upright, crop to the receipt, or retake it in better light.",
       );
+    const partlyRead = page.words.length > 0 && readingLooksPartial(inkRows(full), page);
     succeeded = true;
-    return { lines, text: page.text, rotation, crop, passes, engine: engine.name };
+    return { lines, text: page.text, rotation, crop, passes, engine: engine.name, partlyRead };
   } finally {
     clearTimeout(timer);
     signal.removeEventListener("abort", onAbort);

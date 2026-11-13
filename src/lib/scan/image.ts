@@ -233,3 +233,62 @@ export function detectPaperBounds(src: Pixels): Rect | null {
   if (area < 0.15 || area > 0.92) return null;
   return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
 }
+
+/** A flattened pixel this dark is ink (flattened paper sits near 235). */
+export const INK_LEVEL = 110;
+
+/**
+ * Which rows of a flattened image hold print (WO-001, D14): a row is printed when enough pixels in
+ * its middle 80% are ink-dark. The outer 10% on each side are left out, so a sliver of background
+ * kept by the crop margin never counts. Returns one 0/1 per row. Pure.
+ */
+export function inkRowProfile(src: Pixels): Uint8Array {
+  const { width: w, height: h, data } = src;
+  const x0 = Math.floor(w * 0.1);
+  const x1 = Math.ceil(w * 0.9);
+  const need = Math.max(2, Math.round((x1 - x0) * 0.004));
+  const out = new Uint8Array(h);
+  for (let y = 0; y < h; y++) {
+    let n = 0;
+    for (let x = x0; x < x1 && n < need; x++) if (data[(y * w + x) * 4]! < INK_LEVEL) n++;
+    out[y] = n >= need ? 1 : 0;
+  }
+  return out;
+}
+
+/**
+ * A reading is "partly read" when at least this share of the printed rows has no recognised word
+ * (WO-001, D14). Logos, QR codes and barcodes are printed but hold no words, so the line is well
+ * above what they take on a normal receipt.
+ */
+export const PARTLY_READ_SHARE = 0.35;
+
+export interface WordBand {
+  y0: number;
+  y1: number;
+}
+
+/**
+ * Share (0..1) of the printed rows that no recognised word covers. Each word covers its own rows
+ * plus half a typical word height above and below (line spacing). 0 when nothing is printed. Pure.
+ */
+export function unreadPrintShare(inkRows: Uint8Array, words: readonly WordBand[]): number {
+  const h = inkRows.length;
+  let printed = 0;
+  for (let y = 0; y < h; y++) printed += inkRows[y]!;
+  if (!printed) return 0;
+  const heights = words
+    .map((b) => b.y1 - b.y0)
+    .filter((x) => x > 0)
+    .sort((a, b) => a - b);
+  const pad = heights.length ? Math.ceil(heights[Math.floor(heights.length / 2)]! / 2) : 0;
+  const covered = new Uint8Array(h);
+  for (const b of words) {
+    const a = Math.max(0, Math.floor(b.y0) - pad);
+    const z = Math.min(h - 1, Math.ceil(b.y1) + pad);
+    for (let y = a; y <= z; y++) covered[y] = 1;
+  }
+  let unread = 0;
+  for (let y = 0; y < h; y++) if (inkRows[y] && !covered[y]) unread++;
+  return unread / printed;
+}

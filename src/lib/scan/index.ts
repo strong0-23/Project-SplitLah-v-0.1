@@ -18,6 +18,7 @@
  */
 import { sharedEnginePool } from "./engine-pool";
 import { isConsistent, parseReceiptLines, scoreParse, type ParseResult } from "./parse";
+import { PARTLY_READ_NOTE } from "./review";
 import { runOcr, type OcrProgress, type ScanDeps } from "./scan";
 import type { EnginePool } from "./engine-pool";
 import type { CropFractions, OcrEngine, Rotation, ScanOptions } from "./types";
@@ -40,7 +41,14 @@ export {
   type ParseResult,
   type SetAsideRow,
 } from "./parse";
-export { reviewHints, rowKey, type ReviewHints } from "./review";
+export {
+  hasPartlyReadNote,
+  PARTLY_READ_NOTE,
+  readingIncomplete,
+  reviewHints,
+  rowKey,
+  type ReviewHints,
+} from "./review";
 export { anchorItems, type AnchorInput, type AnchorOutcome, type AnchorRow } from "./anchor";
 export { runOcr, LOAD_TIMEOUT_MS, SCAN_TIMEOUT_MS, type OcrProgress, type OcrResult } from "./scan";
 export { createTesseractEngine } from "./tesseract-engine";
@@ -82,5 +90,13 @@ export async function scanReceipt(
   };
   const res = await runOcr(file, opts, onProgress, signal, deps);
   const parsed = parseReceiptLines(res.lines); // raw text shown to the user = the rows the parser read
+  if (res.partlyRead) {
+    // D14: said first, in the receipt's existing warnings (nothing new is stored).
+    parsed.warnings = [PARTLY_READ_NOTE, ...parsed.warnings];
+    parsed.receipt.ocrWarnings = [PARTLY_READ_NOTE, ...(parsed.receipt.ocrWarnings ?? [])].slice(
+      0,
+      20,
+    );
+  }
   return { ...parsed, rotation: res.rotation, crop: res.crop, passes: res.passes };
 }

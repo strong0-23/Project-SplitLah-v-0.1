@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LOAD_TIMEOUT_MS, SCAN_TIMEOUT_MS, orientationSettled, runOcr } from "./scan";
+import {
+  LOAD_TIMEOUT_MS,
+  SCAN_TIMEOUT_MS,
+  orientationSettled,
+  readingLooksPartial,
+  runOcr,
+} from "./scan";
 import { OcrCancelled, OcrError, type OcrEngine, type OcrPage, type OcrWord } from "./types";
 
 const mocks = vi.hoisted(() => ({ createWorker: vi.fn() }));
@@ -195,7 +201,7 @@ describe("per-engine load limit (OcrEngine.loadTimeoutMs)", () => {
 });
 
 // ---------------------------------------------------------------------------------------------
-// WO-001 (D14): orientation. Synthetic word boxes only.
+// WO-001 (D14): orientation and the partly-read check. Synthetic word boxes only.
 
 const word = (text: string, confidence: number, y = 0, wide = true): OcrWord => ({
   text,
@@ -245,5 +251,35 @@ describe("orientation (D14)", () => {
       { ...deps, createEngine: () => engine },
     );
     expect(res.rotation).toBe(180); // the second candidate for a square/portrait photo
+  });
+});
+
+describe("partly-read check (D14)", () => {
+  // 20 printed rows of 10 pixel rows each (every other band), 400 rows in all.
+  const ink = new Uint8Array(400).map((_, y) => (Math.floor(y / 10) % 2 === 0 ? 1 : 0));
+  const read = (bands: number): OcrPage => ({
+    text: "",
+    words: Array.from({ length: bands }, (_, i) => ({
+      text: "WORD",
+      confidence: 90,
+      bbox: { x0: 0, y0: i * 20, x1: 50, y1: i * 20 + 10 },
+    })),
+  });
+
+  it("is quiet when the words cover the printed rows", () => {
+    expect(readingLooksPartial(ink, read(20))).toBe(false);
+  });
+
+  it("fires when the reading stops early on the printed page", () => {
+    expect(readingLooksPartial(ink, read(3))).toBe(true);
+  });
+
+  it("ignores blank and very doubtful words, and an engine without word boxes", () => {
+    const blanks: OcrPage = {
+      text: "",
+      words: read(20).words.map((w, i) => ({ ...w, text: i < 17 ? " " : w.text })),
+    };
+    expect(readingLooksPartial(ink, blanks)).toBe(true);
+    expect(readingLooksPartial(ink, { text: "x", words: [] })).toBe(false);
   });
 });

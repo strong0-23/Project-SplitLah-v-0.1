@@ -4,6 +4,8 @@ import { groupRows, pageToLines } from "./layout";
 import { classifyLabel } from "./lexicon";
 import { detectCurrency, detectFormat, findAmounts, fixOcrDigits } from "./numbers";
 import { parseReceiptText } from "./parse";
+import { EnginePool } from "./engine-pool";
+import { PARTLY_READ_NOTE, scanReceipt } from "./index";
 import { runOcr } from "./scan";
 import type { OcrEngine, OcrWord } from "./types";
 
@@ -149,5 +151,61 @@ describe("scan workflow with an injected engine", () => {
     expect(engine.terminate).toHaveBeenCalled();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+});
+
+describe("scan: a partly read photo is said so on the receipt (D14)", () => {
+  /** A 10-row prepared image whose every row holds print; the engine reads only the top rows. */
+  async function scanWith(wordRows: number) {
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn().mockResolvedValue({ width: 10, height: 10, close: vi.fn() }),
+    );
+    const px = () => ({ data: new Uint8ClampedArray(400).fill(20), width: 10, height: 10 });
+    vi.spyOn(document, "createElement").mockReturnValue({
+      width: 10,
+      height: 10,
+      getContext: () => ({
+        scale: vi.fn(),
+        translate: vi.fn(),
+        rotate: vi.fn(),
+        drawImage: vi.fn(),
+        getImageData: px,
+        createImageData: px,
+        putImageData: vi.fn(),
+      }),
+      toBlob: (cb: (b: Blob) => void) => cb(new Blob(["p"])),
+    } as unknown as HTMLCanvasElement);
+    const words = Array.from({ length: wordRows }, (_, i) => w("Tea 1.00", 0, i, 50, i + 1));
+    const engine: OcrEngine = {
+      name: "fake",
+      load: vi.fn(async () => undefined),
+      recognize: vi.fn(async () => ({ text: "Tea 1.00", words })),
+      terminate: vi.fn(async () => undefined),
+    };
+    try {
+      return await scanReceipt(
+        new File(["x"], "r.jpg", { type: "image/jpeg" }),
+        { rotation: 0, crop: null },
+        () => undefined,
+        new AbortController().signal,
+        () => engine,
+        new EnginePool(),
+      );
+    } finally {
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+    }
+  }
+
+  it("adds the note first in the receipt's existing warnings when most print went unread", async () => {
+    const res = await scanWith(2);
+    expect(res.receipt.ocrWarnings?.[0]).toBe(PARTLY_READ_NOTE);
+    expect(res.warnings[0]).toBe(PARTLY_READ_NOTE);
+  });
+
+  it("adds nothing when the words cover the printed rows", async () => {
+    const res = await scanWith(10);
+    expect(res.receipt.ocrWarnings ?? []).not.toContain(PARTLY_READ_NOTE);
   });
 });

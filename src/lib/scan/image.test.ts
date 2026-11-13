@@ -1,9 +1,17 @@
 /**
- * Pure pixel preprocessing (WO-001, D14): crop safety and flattening.
+ * Pure pixel preprocessing (WO-001, D14): crop safety, flattening, printed-row detection.
  * Synthetic pixel arrays only.
  */
 import { describe, expect, it } from "vitest";
-import { detectPaperBounds, flattenIllumination, widenRowsToPaper, type Pixels } from "./image";
+import {
+  detectPaperBounds,
+  flattenIllumination,
+  inkRowProfile,
+  PARTLY_READ_SHARE,
+  unreadPrintShare,
+  widenRowsToPaper,
+  type Pixels,
+} from "./image";
 
 /** A grey image built from a function of (x, y) → grey level. */
 function grey(w: number, h: number, f: (x: number, y: number) => number): Pixels {
@@ -115,5 +123,26 @@ describe("flattenIllumination", () => {
     const at = (x: number, y: number) => out.data[(y * 120 + x) * 4]!;
     expect(Math.abs(at(4, 30) - at(4, 90))).toBeLessThanOrEqual(10); // paper, lit vs shadow
     expect(at(0, 100)).toBeLessThan(110); // ink in the shadow stays ink
+  });
+});
+
+describe("printed rows and the partly-read check (D14)", () => {
+  const page = grey(100, 200, (x, y) => (y % 20 < 4 && x > 20 && x < 80 && x % 4 < 2 ? 20 : 235));
+
+  it("marks rows holding print, ignoring the outer 10% of each side", () => {
+    const rows = inkRowProfile(page);
+    expect(rows[0]).toBe(1);
+    expect(rows[10]).toBe(0);
+    const edgeOnly = grey(100, 10, (x) => (x < 8 || x > 92 ? 0 : 235));
+    expect([...inkRowProfile(edgeOnly)].every((v) => v === 0)).toBe(true);
+  });
+
+  it("measures the share of printed rows no word covers", () => {
+    const rows = inkRowProfile(page);
+    const words = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ y0: i * 20, y1: i * 20 + 4 }));
+    expect(unreadPrintShare(rows, words(10))).toBe(0); // every printed row read
+    expect(unreadPrintShare(rows, words(2))).toBeGreaterThanOrEqual(PARTLY_READ_SHARE); // stops early
+    expect(unreadPrintShare(new Uint8Array(5), words(1))).toBe(0); // nothing printed
   });
 });
