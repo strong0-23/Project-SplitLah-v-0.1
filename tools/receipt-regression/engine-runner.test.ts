@@ -165,7 +165,12 @@ describe("held-out mode: no reference values anywhere", () => {
       { found: 4, of: 4 },
       { found: 0, of: 4 },
     ]);
-    expect(rows[0]).toMatch(/\| coverage=4\/4 \| incomplete=no$/);
+    expect(rows[0]).toMatch(
+      /\| coverage=4\/4 \| incomplete=no \| flagged=\d+\/\d+ \| uncertain=\d$/,
+    );
+    // Review burden (WO-004): counts only; a failed scan is not measured.
+    expect(out.results[0]!.review).toMatchObject({ flagged: expect.any(Number), rows: 2 });
+    expect(rows[2]).toMatch(/\| flagged=- \| uncertain=-$/);
     expect(summary).toContain("coverage-median=100.0%");
     expect(
       aggregate({ info: { warmRuns: 0 } as DesktopRun["info"], results: out.results }, "tesseract")

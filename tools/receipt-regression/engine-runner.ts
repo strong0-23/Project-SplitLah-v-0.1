@@ -17,7 +17,7 @@ import type { Receipt } from "../../src/lib/types";
 import { countCorrections, countSilent } from "./corrections";
 import { readingCoverage } from "./coverage";
 import { readingIncomplete, reviewHints } from "../../src/lib/scan/review";
-import type { EngineId, ReceiptEngineResult } from "./comparison";
+import { reviewBurden, type EngineId, type ReceiptEngineResult } from "./comparison";
 import { evaluate, type Check, type Expected } from "./model";
 import { ENGINE_COMPARISON_NAME_MATCH, type NameMatch } from "./names";
 import { rework } from "./rework-parser";
@@ -111,6 +111,8 @@ export async function runEngineComparison(
         if (c.amounts?.length) result.coverage = readingCoverage(c.amounts, firstText);
         // Would the review screen say the photo was only partly read (D14)?
         result.incomplete = !!readingIncomplete(first.receipt, reviewHints(firstText));
+        // How much the review screen highlights (WO-004): flagged rows, uncertain money fields.
+        result.review = reviewBurden(first.receipt);
         const checks = c.expected
           ? evaluate(c.expected, first.receipt, rework, {
               nameMatch: opts.nameMatch ?? ENGINE_COMPARISON_NAME_MATCH,

@@ -72,7 +72,7 @@ describe("reading coverage", () => {
       incomplete: true,
     };
     const line = receiptLine(r);
-    expect(line).toMatch(/coverage=3\/4 \| incomplete=yes$/);
+    expect(line).toMatch(/coverage=3\/4 \| incomplete=yes \| flagged=- \| uncertain=-$/);
     const run = `run | set=development | runtime=desktop | browser=Chrome | version=1 | os=Linux | revision=x | engines=tesseract | warm-runs=0 | condition=first-use | name-match=recognisable-0.70 | complete=yes | receipts=1\n${line}`;
     const back = parseSummaries(run).runs[0]!.results[0]!;
     expect(back.coverage).toEqual({ found: 3, of: 4 });
