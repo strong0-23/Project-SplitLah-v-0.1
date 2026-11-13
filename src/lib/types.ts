@@ -98,4 +98,3 @@ export interface BillCalculation {
   totals: BillTotals;
   participants: ParticipantBill[];
 }
-

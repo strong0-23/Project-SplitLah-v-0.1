@@ -78,7 +78,7 @@ Run all of these before opening the PR and list the results in the report.
 | Production build | `npm run build` |
 | Deploy config | `npx wrangler@4.154.0 deploy --dry-run --config cloudflare/wrangler.jsonc` |
 | Scan → review → split, headless | `tools/receipt-regression/smoke/review-smoke.mjs` (its header says how) |
-| Lint on the files you touched | `npx eslint <those files>` (full `npm run lint` once WO-003 is merged) |
+| Lint | `npm run lint` (0 errors required) |
 | No private data | search your diff for real shop names, item names and card digits before every push |
 
 When a work order asks for before/after numbers, measure `origin/main` and your branch the same
@@ -168,7 +168,7 @@ This is work on our own image preparation, not on the engine: `image.ts`, `canva
 
 ### WO-002: Quantity confirmed by the receipt's printed item count
 
-- **Status:** open
+- **Status:** done (merged 13 Nov 2026)
 - **Branch:** `wo/002-quantity-by-item-count`
 - **Report:** `docs/reports/2026-11-wo002-quantity-by-item-count.md`
 - **Decision ID for the rule:** D15 (approved under the owner's delegation, 12 Nov 2026)
@@ -210,7 +210,7 @@ a model, with a count that does not match; a count that matches only if some num
 
 ### WO-003: Make `npm run lint` usable
 
-- **Status:** open
+- **Status:** done (merged 13 Nov 2026)
 - **Branch:** `wo/003-lint`
 - **Report:** none; describe it in the PR.
 
@@ -237,3 +237,5 @@ changes no behaviour: tests, type checks and build pass before and after.
 | Paddle adapter, canvas check, CSP, comparison harness, name matching | #4 to #8 | 11 Nov 2026 | Comparison run |
 | Paddle removal | #9 | 12 Nov 2026 | Tesseract is the only engine |
 | Batch 3: structure + review | #10 | 12 Nov 2026 | Within 2 corrections 2/12 → 4/12 on the development set |
+| WO-002: quantity by printed item count (D15) | #12 | 13 Nov 2026 | Parser-only on stored readings: within 2 corrections 4/12 → 5/12, silent errors 10 → 4 (fired on 1 receipt) |
+| WO-003: lint usable | #13 | 13 Nov 2026 | `npm run lint` 0 errors, 9 warnings |

@@ -10,7 +10,8 @@ export function summaryText(r: Receipt, calc: BillCalculation): string {
   out.push("");
   for (const p of calc.participants) {
     out.push(`${p.name || "Unnamed"}: ${formatMoney(p.owedCents)}`);
-    for (const it of p.items) out.push(`  • ${it.description}${it.note ? ` (${it.note})` : ""}: ${formatMoney(it.cents)}`);
+    for (const it of p.items)
+      out.push(`  • ${it.description}${it.note ? ` (${it.note})` : ""}: ${formatMoney(it.cents)}`);
     const parts = [`items ${formatMoney(p.itemSubtotalCents)}`];
     if (p.discountCents) parts.push(`discount -${formatMoney(p.discountCents)}`);
     if (p.serviceCents) parts.push(`service ${formatMoney(p.serviceCents)}`);

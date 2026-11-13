@@ -45,6 +45,25 @@ export interface ItemRow {
   taxMarked: boolean;
   /** The quantity was printed explicitly (x / @ / a Qty column / unit × qty = total). */
   qtyObserved: boolean;
+  /**
+   * The bare number D7 left in `desc` unresolved (no Qty heading, no unit × number = total), for
+   * D15 (`confirmQuantitiesByCount` in parse.ts). null when there is none or the quantity was read.
+   */
+  bareNumber: BareNumber | null;
+  /** The row is doubtful for a reason other than that bare number (columns, short name, …). */
+  otherDoubt: boolean;
+}
+
+/** A plain number at one end of an item name, kept in the name because nothing shows it is a quantity. */
+export interface BareNumber {
+  value: number;
+  /** The name without the number (and without a per-item tax marker in front of it). */
+  descWithout: string;
+  at: "start" | "end";
+  /** A per-item tax marker stood between the name and the number ("SOUP(GST*) 2"). */
+  taxMarked: boolean;
+  /** The name also has a whole number at its other end ("2 SOAP 3"): which one is meant is unknown. */
+  bothEnds: boolean;
 }
 
 export interface ItemSplit {
@@ -56,7 +75,7 @@ export interface ItemSplit {
   /** The quantity was printed explicitly (x / @ / a Qty column). */
   qtyObserved: boolean;
   /** A bare number kept in `desc` because nothing shows it is a quantity. */
-  bareNumber: { value: number; descWithout: string } | null;
+  bareNumber: BareNumber | null;
 }
 
 const MAX_QTY = 99;
@@ -119,10 +138,10 @@ export function splitItemLabel(label: string, cols: QtyColumns = NO_QTY_COLUMNS)
         setQty(glyph ? 1 : Number(raw), glyph);
         desc = bareTrail[1] ?? desc;
       } else if (!glyph) {
-        bareNumber = { value: Number(raw), descWithout: bareTrail[1] ?? desc };
+        bareNumber = bare(Number(raw), bareTrail[1] ?? desc, "end", desc);
       } else qtyUncertain = true;
     } else if (bareLead && !weighed) {
-      bareNumber = { value: Number(bareLead[1]), descWithout: bareLead[2] ?? desc };
+      bareNumber = bare(Number(bareLead[1]), bareLead[2] ?? desc, "start", desc);
     } else if (!weighed && !IDENTIFIER.test(desc) && FRACTIONAL_EDGE.test(desc)) {
       qtyUncertain = true; // could be a fractional quantity: kept in the name, flagged
     }
@@ -144,12 +163,33 @@ export function splitItemLabel(label: string, cols: QtyColumns = NO_QTY_COLUMNS)
       .trim();
   desc = tidy(desc);
   if (bareNumber) {
-    bareNumber.descWithout = tidy(bareNumber.descWithout);
+    let without = bareNumber.descWithout;
+    if (bareNumber.at === "end" && ITEM_TAX_MARKER.test(without)) {
+      // "SOUP(GST*) 2": the tax marker sat between the name and the number.
+      bareNumber.taxMarked = true;
+      without = without.replace(ITEM_TAX_MARKER, "");
+    }
+    bareNumber.descWithout = tidy(without);
     // Unless confirmed later, an unexplained number makes the quantity uncertain.
     qtyUncertain = true;
   }
   return { desc, quantity, qtyUncertain, taxMarked, weighed, qtyObserved, bareNumber };
 }
+
+/** A whole number at both ends of a name ("2 SOAP 3"), after any tax marker before the last one. */
+const BOTH_ENDS = /^\d+\s.*\s\d+$/;
+const bare = (
+  value: number,
+  descWithout: string,
+  at: BareNumber["at"],
+  desc: string,
+): BareNumber => ({
+  value,
+  descWithout,
+  at,
+  taxMarked: false,
+  bothEnds: BOTH_ENDS.test(desc.trim()),
+});
 
 export const letterCount = (s: string) => (s.match(/\p{L}/gu) ?? []).length;
 
@@ -167,6 +207,8 @@ export function readItemRow(
   const s = splitItemLabel(rawLabel, cols);
   let { quantity, qtyObserved, desc } = s;
   let uncertain = s.qtyUncertain;
+  /** Doubt from anything other than an unresolved bare number (D15 may clear only that one). */
+  let otherDoubt = s.qtyUncertain && !s.bareNumber;
 
   // "COFFEE 2 @ 3.50" / "2 @ 8.95" / "BANANA 0.5kg @ 3.98/kg": the only amount is a unit price.
   // Never copy it into the line total, and never multiply to fill one in (parser-v2).
@@ -180,11 +222,14 @@ export function readItemRow(
       uncertain: true,
       taxMarked: s.taxMarked,
       qtyObserved,
+      bareNumber: qtyObserved ? null : s.bareNumber,
+      otherDoubt: true,
     };
   }
   // "COFFEE 2 x 3.50": the lone amount may be a unit price or the line total. Kept, flagged.
-  if (amounts.length === 1 && /\d\s*[x×*]\s*$/i.test(before)) uncertain = true;
+  if (amounts.length === 1 && /\d\s*[x×*]\s*$/i.test(before)) uncertain = otherDoubt = true;
 
+  let resolved = false;
   if (amounts.length >= 2 && !s.weighed) {
     const unit = amounts[amounts.length - 2]!.cents;
     const between = line.slice(amounts[amounts.length - 2]!.end, total.start).trim();
@@ -199,6 +244,7 @@ export function readItemRow(
       desc = s.bareNumber.descWithout;
       qtyObserved = true;
       uncertain = false;
+      resolved = true;
     } else if (unit > 0 && quantity * unit === total.cents) {
       if (qtyObserved || quantity === 1) uncertain = s.bareNumber !== null; // columns agree
     } else if (
@@ -209,21 +255,65 @@ export function readItemRow(
     ) {
       // Quantity not printed but unit × n = total: auto-filled, so the row is flagged for a check.
       quantity = total.cents / unit;
-      uncertain = true;
+      uncertain = otherDoubt = true;
     } else if (unit !== total.cents) {
-      uncertain = true; // the columns disagree: keep the line total and ask the user
+      uncertain = otherDoubt = true; // the columns disagree: keep the line total and ask the user
     }
   }
 
   const letters = letterCount(desc);
-  if (letters < 4 || /[|{}[\]]/.test(rawLabel)) uncertain = true;
+  if (letters < 4 || /[|{}[\]]/.test(rawLabel)) uncertain = otherDoubt = true;
   return {
     desc: desc.slice(0, 80),
     quantity,
     lineTotalCents: total.cents,
     unitPriceOnlyCents: null,
     uncertain,
-    taxMarked: s.taxMarked,
+    taxMarked: s.taxMarked || (resolved && !!s.bareNumber?.taxMarked),
     qtyObserved,
+    bareNumber: resolved || qtyObserved ? null : s.bareNumber,
+    otherDoubt,
   };
+}
+
+/** One item row as D15 sees it: its quantity and line total now, and its unresolved bare number. */
+export interface CountRow {
+  quantity: number;
+  lineTotalCents: number | null;
+  /** null when the row has no unresolved bare number; `ok` false when it can't be a candidate. */
+  bare: { value: number; ok: boolean } | null;
+}
+
+/**
+ * D15: quantities confirmed by the receipt's printed item count. Every row with an unresolved bare
+ * number (1-99) takes that number as its quantity, every other row keeps its quantity, and the
+ * result is used only when the quantities then add up to the printed count exactly. All or
+ * nothing: null (change nothing) when no count was read, counts disagree or are not whole, a row
+ * has no line total, a candidate row can't be read cleanly (numbers at both ends, …) or already
+ * has another quantity, there is no candidate, or the sum is off by even one.
+ */
+export function quantitiesByItemCount(
+  rows: readonly CountRow[],
+  counts: readonly string[],
+): number[] | null {
+  if (!counts.length || !rows.length || !counts.every((c) => /^\d+$/.test(c))) return null;
+  const n = Number(counts[0]);
+  if (n < 1 || counts.some((c) => Number(c) !== n)) return null;
+  const out: number[] = [];
+  let sum = 0;
+  let candidates = 0;
+  for (const row of rows) {
+    if (row.lineTotalCents === null) return null;
+    if (!row.bare) {
+      out.push(row.quantity);
+      sum += row.quantity;
+      continue;
+    }
+    const v = row.bare.value;
+    if (!row.bare.ok || row.quantity !== 1 || v < 1 || v > MAX_QTY) return null;
+    out.push(v);
+    sum += v;
+    candidates++;
+  }
+  return candidates > 0 && sum === n ? out : null;
 }
