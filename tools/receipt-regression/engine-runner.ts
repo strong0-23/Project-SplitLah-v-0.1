@@ -15,6 +15,8 @@
  */
 import type { Receipt } from "../../src/lib/types";
 import { countCorrections, countSilent } from "./corrections";
+import { readingCoverage } from "./coverage";
+import { readingIncomplete, reviewHints } from "../../src/lib/scan/review";
 import type { EngineId, ReceiptEngineResult } from "./comparison";
 import { evaluate, type Check, type Expected } from "./model";
 import { ENGINE_COMPARISON_NAME_MATCH, type NameMatch } from "./names";
@@ -28,6 +30,11 @@ export interface EngineCase {
   expected: Expected | null;
   /** Sanitised photo-condition tags (comparison.ts `cleanTags`). */
   tags?: string[];
+  /**
+   * The reference's printed amounts in cents (coverage.ts `printedAmounts`), for reading coverage.
+   * Only the count found is kept in results.
+   */
+  amounts?: readonly number[];
 }
 
 export interface ScanOutput {
@@ -101,6 +108,9 @@ export async function runEngineComparison(
         const first = await scan(engine, c.image, opts.signal);
         result.firstMs = opts.now() - t0;
         firstText = first.receipt.rawOcrText ?? "";
+        if (c.amounts?.length) result.coverage = readingCoverage(c.amounts, firstText);
+        // Would the review screen say the photo was only partly read (D14)?
+        result.incomplete = !!readingIncomplete(first.receipt, reviewHints(firstText));
         const checks = c.expected
           ? evaluate(c.expected, first.receipt, rework, {
               nameMatch: opts.nameMatch ?? ENGINE_COMPARISON_NAME_MATCH,
@@ -119,6 +129,8 @@ export async function runEngineComparison(
             text: firstText,
           };
       } catch (e) {
+        // A failed scan read nothing: coverage 0 of the printed amounts.
+        if (c.amounts?.length) result.coverage = { found: 0, of: c.amounts.length };
         result.status = opts.signal.aborted ? "cancelled" : "failed";
         result.stage = opts.signal.aborted ? "cancelled" : stageOf(e, "scan");
         if (detail) detail.error = e instanceof Error ? e.message : String(e);

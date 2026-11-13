@@ -37,6 +37,34 @@ preprocessing changes can be measured on the development set and on a fresh held
   charge fields, the printed total, silent errors, the extra-correction count, and the first and
   warm scan times. It also notes whether the warm scans read the same text as the first.
 
+### Reading coverage (WO-001)
+
+Each scored receipt also gets its **reading coverage**: how many of the reference's printed amounts
+(each known line amount, each charge, the GST amount when no charge row holds it, and the printed
+payable total) appear anywhere in the OCR text the parser read, as a multiset (an amount printed
+three times needs three readings). An amount counts only with the same digits as a two-decimal
+number (`12.90`, `12,90`, `1,234.56`); a misread digit does not. It measures whether the text
+reached the parser, before any parsing. Receipt lines carry it as a count (`coverage=5/6`), the
+engine line gives the median share (`coverage-median=…`), and `incomplete=yes|no` says whether the
+review screen would show "The photo was only partly read" (D14). Code: `coverage.ts`.
+
+### Headless development runner (WO-001)
+
+`dev-run.mjs` runs the engine scoring on the private **development** folder in headless Chrome and
+prints the summary block (IDs and counts only). It writes nothing to disk, refuses
+`NODE_ENV=production`, and starts the harness dev server (whose config refuses production builds).
+Never point it at held-out receipts.
+
+```bash
+SPLITLAH_DEV_RECEIPTS=/path/to/private/development/folder \
+PLAYWRIGHT_MODULE=/path/to/node_modules/playwright/index.mjs CHROME_PATH=/usr/bin/google-chrome \
+node tools/receipt-regression/dev-run.mjs [--repeat 3] [--ids REG001,REG002] [--revision label]
+```
+
+`--repeat N` scans the set N times, each in a fresh browser, and adds `timing |` lines: each
+receipt's median first-scan time and the median of the runs' first-scan medians (use it on a shared
+or busy machine). `HARNESS_PORT` picks the dev server's port (default 8081).
+
 ### Extra correction actions (owner-confirmed, 11 Nov 2026)
 
 For one receipt, against your verified reference, counting **only fields with state "known"**: the

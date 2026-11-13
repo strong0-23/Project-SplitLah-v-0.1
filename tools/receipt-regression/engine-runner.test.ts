@@ -8,7 +8,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { OcrError } from "../../src/lib/scan/types";
-import { receiptLine, summaryBlock, type DesktopRun } from "./comparison";
+import { aggregate, receiptLine, summaryBlock, type DesktopRun } from "./comparison";
+import { printedAmounts } from "./coverage";
 import { runEngineComparison, type EngineCase, type ScanFn } from "./engine-runner";
 import { checkReference, toExpected } from "./owner-reference";
 import { rework } from "./rework-parser";
@@ -77,6 +78,7 @@ function cases(): EngineCase[] {
       id,
       image: new File([id], `${id}.png`, { type: "image/png" }),
       expected: toExpected(ref).expected,
+      amounts: printedAmounts(ref),
     };
   });
 }
@@ -157,6 +159,18 @@ describe("held-out mode: no reference values anywhere", () => {
     expect(summary).toContain(
       "receipt | id=REG903 | engine=tesseract | status=failed | stage=load",
     );
+    // Reading coverage (WO-001) is a count: REG901 read all 4 printed amounts; a failed scan 0.
+    expect(out.results.map((r) => r.coverage)).toEqual([
+      { found: 4, of: 4 },
+      { found: 4, of: 4 },
+      { found: 0, of: 4 },
+    ]);
+    expect(rows[0]).toMatch(/\| coverage=4\/4 \| incomplete=no$/);
+    expect(summary).toContain("coverage-median=100.0%");
+    expect(
+      aggregate({ info: { warmRuns: 0 } as DesktopRun["info"], results: out.results }, "tesseract")
+        .coverageMedian,
+    ).toBe(1);
     expect(summary).not.toContain("detail |");
   });
 

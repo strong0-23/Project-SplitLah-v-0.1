@@ -53,6 +53,7 @@ import {
   type EngineId,
   type ReceiptEngineResult,
 } from "./comparison";
+import { printedAmounts } from "./coverage";
 import { runEngineComparison, type EngineCase, type EngineDetail } from "./engine-runner";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -121,6 +122,8 @@ interface RunCase {
   notes: string[];
   /** Sanitised photo-condition tags from the reference (owner references only). */
   tags: string[];
+  /** The reference's printed amounts (cents), for reading coverage (owner references only). */
+  amounts?: number[];
 }
 
 type ParserResult = {
@@ -414,6 +417,7 @@ async function ownerCases(): Promise<{ cases: RunCase[]; setupNotes: string[] } 
       referenceText: text,
       notes,
       tags: photoTags(json),
+      amounts: printedAmounts(json),
     });
   }
   if (failures.length) {
@@ -675,7 +679,13 @@ async function runEngines() {
       status.textContent = `Refused: ${c.id}: the photo is not a supported image${heldOut() ? "" : ` (${invalid})`}.`;
       return;
     }
-    cases.push({ id: c.id, image: c.input, expected: c.expected, tags: c.tags });
+    cases.push({
+      id: c.id,
+      image: c.input,
+      expected: c.expected,
+      tags: c.tags,
+      ...(c.amounts ? { amounts: c.amounts } : {}),
+    });
   }
   const held = heldOut();
   const ua = describeUserAgent(navigator.userAgent);
