@@ -95,9 +95,101 @@ function longestRun(frac: Float32Array, min: number, gap: number): [number, numb
   return best;
 }
 
+/** Median of a list of grey values (0..255) via a histogram. -1 when empty. */
+function medianOf(values: Uint8Array, count: number): number {
+  if (!count) return -1;
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < count; i++) hist[values[i]!]!++;
+  let seen = 0;
+  for (let v = 0; v < 256; v++) {
+    seen += hist[v]!;
+    if (seen * 2 >= count) return v;
+  }
+  return 255;
+}
+
+/** Paper is clearly brighter than the background beside it (also under a shadow or colour cast). */
+export const PAPER_RATIO = 1.5;
+export const PAPER_MIN_STEP = 24;
+
+/**
+ * Is the strip of rows [y0, y1) still paper between columns [x0, x1]? It is when its middle part is
+ * clearly brighter than the background beside the crop in the same rows. A shadow darkens paper and
+ * background alike, so the comparison holds across a shadow edge where a global threshold fails.
+ * Returns null when there is too little background beside the crop to compare with: then nothing
+ * proves the strip is background, so the caller keeps it. Pure.
+ */
+function rowsArePaper(
+  g: Uint8Array,
+  sw: number,
+  x0: number,
+  x1: number,
+  y0: number,
+  y1: number,
+): boolean | null {
+  const cw = x1 - x0 + 1;
+  const margin = Math.max(1, Math.round(sw * 0.02));
+  const ix0 = x0 + Math.floor(cw * 0.15);
+  const ix1 = x1 - Math.floor(cw * 0.15);
+  const inner = new Uint8Array((ix1 - ix0 + 1) * (y1 - y0));
+  const beside = new Uint8Array(sw * (y1 - y0));
+  let ni = 0;
+  let nb = 0;
+  for (let y = y0; y < y1; y++) {
+    for (let x = ix0; x <= ix1; x++) inner[ni++] = g[y * sw + x]!;
+    for (let x = 0; x < sw; x++)
+      if (x < x0 - margin || x > x1 + margin) beside[nb++] = g[y * sw + x]!;
+  }
+  if (nb < Math.max(2, Math.round(sw * 0.03)) * (y1 - y0)) return null;
+  const paper = medianOf(inner, ni);
+  const bg = medianOf(beside, nb);
+  return paper >= bg * PAPER_RATIO && paper - bg >= PAPER_MIN_STEP;
+}
+
+/**
+ * Crop safety (WO-001, D14): a crop must never cut the paper, because text can only be on the paper.
+ * From each end of the row run [top, bottom], strips beyond it are checked with `rowsArePaper`; while
+ * they are still paper the run is widened, tolerating short gaps (a fold or a dense row of text).
+ * When the paper fills the width, so no background beside it can be measured, a strip cannot be
+ * shown to be background and the run is widened all the way (the crop is dropped on that side).
+ * Works on the downsampled grey grid of `detectPaperBounds`. Pure; exported for tests.
+ */
+export function widenRowsToPaper(
+  g: Uint8Array,
+  sw: number,
+  sh: number,
+  cols: [number, number],
+  rows: [number, number],
+): [number, number] {
+  const strip = Math.max(1, Math.round(sh * 0.01));
+  const maxGap = Math.max(1, Math.round(sh * 0.03));
+  const widen = (from: number, dir: 1 | -1): number => {
+    let edge = from;
+    let pos = from;
+    for (;;) {
+      const a = dir > 0 ? pos + 1 : Math.max(0, pos - strip);
+      const b = dir > 0 ? Math.min(sh, pos + 1 + strip) : pos;
+      if (a >= b) break;
+      if (rowsArePaper(g, sw, cols[0], cols[1], a, b) !== false) {
+        pos = dir > 0 ? b - 1 : a;
+        edge = pos;
+      } else {
+        pos = dir > 0 ? b - 1 : a;
+        if (Math.abs(pos - edge) > maxGap) break;
+      }
+    }
+    return edge;
+  };
+  return [widen(rows[0], -1), widen(rows[1], 1)];
+}
+
 /**
  * Finds the bright paper region against a darker background. Returns null when no clear
  * paper/background separation exists (e.g. the photo is already tightly cropped).
+ *
+ * The row run found with the global threshold is then widened while the rows beyond it are still
+ * paper (`widenRowsToPaper`), so a shadow band across the receipt never ends the crop early. If the
+ * widened region covers almost the whole photo, there is no crop (null).
  */
 export function detectPaperBounds(src: Pixels): Rect | null {
   const { width: w, height: h, data } = src;
@@ -129,8 +221,9 @@ export function detectPaperBounds(src: Pixels): Rect | null {
     for (let x = cr[0]; x <= cr[1]; x++) if (g[y * sw + x]! > thr) c++;
     rows[y] = c / cw;
   }
-  const rr = longestRun(rows, 0.3, Math.ceil(sh * 0.06));
-  if (!rr) return null;
+  const found = longestRun(rows, 0.3, Math.ceil(sh * 0.06));
+  if (!found) return null;
+  const rr = widenRowsToPaper(g, sw, sh, cr, found);
   const pad = Math.round(Math.max(w, h) * 0.015);
   const x0 = Math.max(0, cr[0] * step - pad),
     x1 = Math.min(w, (cr[1] + 1) * step + pad);
