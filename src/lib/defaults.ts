@@ -23,7 +23,11 @@ export function emptyReceipt(): Receipt {
   };
 }
 
-export function sampleSession(): { receipt: Receipt; participants: Participant[]; assignments: Record<string, ItemAssignment> } {
+export function sampleSession(): {
+  receipt: Receipt;
+  participants: Participant[];
+  assignments: Record<string, ItemAssignment>;
+} {
   const receipt: Receipt = {
     ...emptyReceipt(),
     merchant: "Sample Hawker Centre",
@@ -41,7 +45,11 @@ export function sampleSession(): { receipt: Receipt; participants: Participant[]
     { id: "p_sample_3", name: "Chloe" },
     { id: "p_sample_4", name: "Daniel" },
   ];
-  const a = (itemId: string, mode: ItemAssignment["mode"], participantIds: string[]): ItemAssignment => ({ itemId, mode, participantIds, quantities: {}, amounts: {} });
+  const a = (
+    itemId: string,
+    mode: ItemAssignment["mode"],
+    participantIds: string[],
+  ): ItemAssignment => ({ itemId, mode, participantIds, quantities: {}, amounts: {} });
   return {
     receipt,
     participants,

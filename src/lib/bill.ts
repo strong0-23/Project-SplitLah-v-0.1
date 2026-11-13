@@ -1,4 +1,10 @@
-import { allocateLargestRemainder, applyRate, includedTax, isSafeCents, MAX_QUANTITY } from "./money";
+import {
+  allocateLargestRemainder,
+  applyRate,
+  includedTax,
+  isSafeCents,
+  MAX_QUANTITY,
+} from "./money";
 import type {
   BillCalculation,
   BillTotals,
@@ -55,20 +61,27 @@ export function computeTotals(r: Receipt): Result<BillTotals> {
     }
   } else {
     if (r.serviceEnabled) {
-      if (r.serviceAmountCents === null) errors.push("Enter the service charge amount from the receipt, or turn it off.");
+      if (r.serviceAmountCents === null)
+        errors.push("Enter the service charge amount from the receipt, or turn it off.");
       else if (!isSafeCents(r.serviceAmountCents)) errors.push("Service charge amount is invalid.");
       else serviceCents = r.serviceAmountCents;
     }
     if (r.gstEnabled) {
-      if (r.gstAmountCents === null) errors.push("Enter the GST amount from the receipt, or turn it off.");
+      if (r.gstAmountCents === null)
+        errors.push("Enter the GST amount from the receipt, or turn it off.");
       else if (!isSafeCents(r.gstAmountCents)) errors.push("GST amount is invalid.");
       else if (r.gstInclusive) gstIncludedCents = r.gstAmountCents;
       else gstAddedCents = r.gstAmountCents;
     }
   }
 
-  if (itemSubtotalCents === 0 && (serviceCents > 0 || gstAddedCents > 0 || gstIncludedCents > 0 || discountCents > 0))
-    errors.push("Item subtotal is $0.00 but charges or a discount are entered. Add item prices or remove the charges.");
+  if (
+    itemSubtotalCents === 0 &&
+    (serviceCents > 0 || gstAddedCents > 0 || gstIncludedCents > 0 || discountCents > 0)
+  )
+    errors.push(
+      "Item subtotal is $0.00 but charges or a discount are entered. Add item prices or remove the charges.",
+    );
 
   if (errors.length) return { ok: false, errors };
 
@@ -76,7 +89,15 @@ export function computeTotals(r: Receipt): Result<BillTotals> {
   const mismatchCents = r.receiptTotalCents === null ? null : r.receiptTotalCents - totalCents;
   return {
     ok: true,
-    value: { itemSubtotalCents, discountCents, serviceCents, gstAddedCents, gstIncludedCents, totalCents, mismatchCents },
+    value: {
+      itemSubtotalCents,
+      discountCents,
+      serviceCents,
+      gstAddedCents,
+      gstIncludedCents,
+      totalCents,
+      mismatchCents,
+    },
   };
 }
 
@@ -94,51 +115,115 @@ export interface ItemAllocation {
 }
 
 /** Determine how an item is allocated across valid participants. Pure. */
-export function allocateItem(item: ReceiptItem, a: ItemAssignment | undefined, participants: Participant[]): ItemAllocation {
+export function allocateItem(
+  item: ReceiptItem,
+  a: ItemAssignment | undefined,
+  participants: Participant[],
+): ItemAllocation {
   const line = item.lineTotalCents ?? 0;
   const valid = new Set(participants.map((p) => p.id));
   const base = { shares: {}, allocatedCents: 0, remainingCents: line, allocatedQty: 0 };
-  if (item.lineTotalCents === null) return { ...base, state: "invalid", message: "Line total missing" };
+  if (item.lineTotalCents === null)
+    return { ...base, state: "invalid", message: "Line total missing" };
   if (!a) return { ...base, state: "unassigned", message: "Not assigned" };
 
   if (a.mode === "single" || a.mode === "even") {
     const ids = [...new Set(a.participantIds.filter((id) => valid.has(id)))].sort();
     if (ids.length === 0) return { ...base, state: "unassigned", message: "Not assigned" };
-    if (a.mode === "single" && ids.length !== 1) return { ...base, state: "invalid", message: "Pick exactly one person" };
-    const shares = allocateLargestRemainder(line, ids.map((id) => ({ id, weight: 1 })));
-    return { shares, allocatedCents: line, remainingCents: 0, allocatedQty: item.quantity, state: "complete", message: ids.length > 1 ? `Split ${ids.length} ways` : "Assigned" };
+    if (a.mode === "single" && ids.length !== 1)
+      return { ...base, state: "invalid", message: "Pick exactly one person" };
+    const shares = allocateLargestRemainder(
+      line,
+      ids.map((id) => ({ id, weight: 1 })),
+    );
+    return {
+      shares,
+      allocatedCents: line,
+      remainingCents: 0,
+      allocatedQty: item.quantity,
+      state: "complete",
+      message: ids.length > 1 ? `Split ${ids.length} ways` : "Assigned",
+    };
   }
 
   if (a.mode === "quantity") {
     const entries = Object.entries(a.quantities).filter(([id]) => valid.has(id));
     for (const [, q] of entries)
-      if (!Number.isSafeInteger(q) || q < 0) return { ...base, state: "invalid", message: "Quantities must be whole numbers ≥ 0" };
+      if (!Number.isSafeInteger(q) || q < 0)
+        return { ...base, state: "invalid", message: "Quantities must be whole numbers ≥ 0" };
     const used = entries.filter(([, q]) => q > 0);
     const qty = used.reduce((s, [, q]) => s + q, 0);
-    if (qty === 0) return { ...base, state: "unassigned", message: `0 of ${item.quantity} allocated` };
-    if (qty > item.quantity) return { ...base, allocatedQty: qty, state: "over", message: `${qty} of ${item.quantity} allocated — too many` };
+    if (qty === 0)
+      return { ...base, state: "unassigned", message: `0 of ${item.quantity} allocated` };
+    if (qty > item.quantity)
+      return {
+        ...base,
+        allocatedQty: qty,
+        state: "over",
+        message: `${qty} of ${item.quantity} allocated — too many`,
+      };
     if (qty < item.quantity) {
       const partial = Math.floor((line * qty) / item.quantity);
-      return { ...base, allocatedQty: qty, allocatedCents: partial, remainingCents: line - partial, state: "partial", message: `${qty} of ${item.quantity} allocated` };
+      return {
+        ...base,
+        allocatedQty: qty,
+        allocatedCents: partial,
+        remainingCents: line - partial,
+        state: "partial",
+        message: `${qty} of ${item.quantity} allocated`,
+      };
     }
-    const shares = allocateLargestRemainder(line, used.map(([id, q]) => ({ id, weight: q })));
-    return { shares, allocatedCents: line, remainingCents: 0, allocatedQty: qty, state: "complete", message: "All units allocated" };
+    const shares = allocateLargestRemainder(
+      line,
+      used.map(([id, q]) => ({ id, weight: q })),
+    );
+    return {
+      shares,
+      allocatedCents: line,
+      remainingCents: 0,
+      allocatedQty: qty,
+      state: "complete",
+      message: "All units allocated",
+    };
   }
 
   // custom
   const entries = Object.entries(a.amounts).filter(([id]) => valid.has(id));
-  for (const [, c] of entries) if (!isSafeCents(c)) return { ...base, state: "invalid", message: "Custom amounts must be valid, non-negative" };
+  for (const [, c] of entries)
+    if (!isSafeCents(c))
+      return { ...base, state: "invalid", message: "Custom amounts must be valid, non-negative" };
   const sum = entries.reduce((s, [, c]) => s + c, 0);
   if (sum === 0 && line > 0) return { ...base, state: "unassigned", message: "No amounts entered" };
-  if (sum > line) return { ...base, allocatedCents: sum, remainingCents: line - sum, state: "over", message: "Amounts exceed line total" };
-  if (sum < line) return { ...base, allocatedCents: sum, remainingCents: line - sum, state: "partial", message: "Amounts below line total" };
+  if (sum > line)
+    return {
+      ...base,
+      allocatedCents: sum,
+      remainingCents: line - sum,
+      state: "over",
+      message: "Amounts exceed line total",
+    };
+  if (sum < line)
+    return {
+      ...base,
+      allocatedCents: sum,
+      remainingCents: line - sum,
+      state: "partial",
+      message: "Amounts below line total",
+    };
   const shares: Record<string, Cents> = {};
   for (const [id, c] of entries) if (c > 0) shares[id] = c;
   if (line === 0 && Object.keys(shares).length === 0) {
     // $0 item: still needs at least one person listed to be "complete"
     if (entries.length === 0) return { ...base, state: "unassigned", message: "Not assigned" };
   }
-  return { shares, allocatedCents: line, remainingCents: 0, allocatedQty: item.quantity, state: "complete", message: "Custom amounts match" };
+  return {
+    shares,
+    allocatedCents: line,
+    remainingCents: 0,
+    allocatedQty: item.quantity,
+    state: "complete",
+    message: "Custom amounts match",
+  };
 }
 
 function shareNote(item: ReceiptItem, a: ItemAssignment, pid: string, nWays: number): string {
@@ -149,18 +234,34 @@ function shareNote(item: ReceiptItem, a: ItemAssignment, pid: string, nWays: num
 }
 
 /** Full calculation. Returns errors if anything is incomplete, inconsistent or unreconciled. */
-export function calculateBill(r: Receipt, participants: Participant[], assignments: Record<string, ItemAssignment>): Result<BillCalculation> {
+export function calculateBill(
+  r: Receipt,
+  participants: Participant[],
+  assignments: Record<string, ItemAssignment>,
+): Result<BillCalculation> {
   const totalsRes = computeTotals(r);
   if (!totalsRes.ok) return totalsRes;
   const totals = totalsRes.value;
   const errors: string[] = [];
   if (participants.length === 0) errors.push("Add at least one person.");
   if (totals.mismatchCents !== null && totals.mismatchCents !== 0)
-    errors.push(`Calculated total differs from the receipt total by ${Math.abs(totals.mismatchCents)} cent(s). Correct the items or charges.`);
+    errors.push(
+      `Calculated total differs from the receipt total by ${Math.abs(totals.mismatchCents)} cent(s). Correct the items or charges.`,
+    );
 
   const bills: Record<string, ParticipantBill> = {};
   for (const p of participants)
-    bills[p.id] = { participantId: p.id, name: p.name, items: [], itemSubtotalCents: 0, discountCents: 0, serviceCents: 0, gstAddedCents: 0, gstIncludedCents: 0, owedCents: 0 };
+    bills[p.id] = {
+      participantId: p.id,
+      name: p.name,
+      items: [],
+      itemSubtotalCents: 0,
+      discountCents: 0,
+      serviceCents: 0,
+      gstAddedCents: 0,
+      gstIncludedCents: 0,
+      owedCents: 0,
+    };
 
   const B = (id: string): ParticipantBill => bills[id]!;
   r.items.forEach((item, i) => {
@@ -173,7 +274,12 @@ export function calculateBill(r: Receipt, participants: Participant[], assignmen
     const ids = Object.keys(alloc.shares);
     for (const pid of ids) {
       B(pid).itemSubtotalCents += alloc.shares[pid] ?? 0;
-      B(pid).items.push({ itemId: item.id, description: item.description, cents: alloc.shares[pid] ?? 0, note: shareNote(item, a!, pid, ids.length) });
+      B(pid).items.push({
+        itemId: item.id,
+        description: item.description,
+        cents: alloc.shares[pid] ?? 0,
+        note: shareNote(item, a!, pid, ids.length),
+      });
     }
   });
   if (errors.length) return { ok: false, errors };
@@ -181,9 +287,15 @@ export function calculateBill(r: Receipt, participants: Participant[], assignmen
   const ids = participants.map((p) => p.id);
   const w = (f: (b: ParticipantBill) => number) => ids.map((id) => ({ id, weight: f(B(id)) }));
   try {
-    const disc = allocateLargestRemainder(totals.discountCents, w((b: ParticipantBill) => b.itemSubtotalCents));
+    const disc = allocateLargestRemainder(
+      totals.discountCents,
+      w((b: ParticipantBill) => b.itemSubtotalCents),
+    );
     ids.forEach((id) => (B(id).discountCents = disc[id] ?? 0));
-    const svc = allocateLargestRemainder(totals.serviceCents, w((b: ParticipantBill) => b.itemSubtotalCents - b.discountCents));
+    const svc = allocateLargestRemainder(
+      totals.serviceCents,
+      w((b: ParticipantBill) => b.itemSubtotalCents - b.discountCents),
+    );
     ids.forEach((id) => (B(id).serviceCents = svc[id] ?? 0));
     const gstW = w((b: ParticipantBill) => b.itemSubtotalCents - b.discountCents + b.serviceCents);
     const gst = allocateLargestRemainder(totals.gstAddedCents, gstW);

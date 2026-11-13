@@ -9,7 +9,15 @@ const STEPS: { key: Step; label: string }[] = [
   { key: "summary", label: "Summary" },
 ];
 
-export function Shell({ step, children, footer }: { step: Step; children: ReactNode; footer?: ReactNode }) {
+export function Shell({
+  step,
+  children,
+  footer,
+}: {
+  step: Step;
+  children: ReactNode;
+  footer?: ReactNode;
+}) {
   const idx = STEPS.findIndex((s) => s.key === step);
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-xl flex-col">
@@ -22,13 +30,24 @@ export function Shell({ step, children, footer }: { step: Step; children: ReactN
           {STEPS.map((s, i) => (
             <li key={s.key} aria-current={i === idx ? "step" : undefined} className="text-center">
               <div className={cn("h-1.5 rounded-full", i <= idx ? "bg-primary" : "bg-border")} />
-              <span className={cn("mt-1 block text-xs", i === idx ? "font-semibold text-foreground" : "text-muted-foreground")}>{i + 1}. {s.label}</span>
+              <span
+                className={cn(
+                  "mt-1 block text-xs",
+                  i === idx ? "font-semibold text-foreground" : "text-muted-foreground",
+                )}
+              >
+                {i + 1}. {s.label}
+              </span>
             </li>
           ))}
         </ol>
       </header>
       <main className="flex-1 space-y-4 px-4 py-4">{children}</main>
-      {footer && <div className="sticky bottom-0 border-t border-border bg-background/95 px-4 py-3 backdrop-blur">{footer}</div>}
+      {footer && (
+        <div className="sticky bottom-0 border-t border-border bg-background/95 px-4 py-3 backdrop-blur">
+          {footer}
+        </div>
+      )}
     </div>
   );
 }
