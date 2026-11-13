@@ -7,6 +7,7 @@ import { formatMoney, formatRate, MAX_QUANTITY, parseRate } from "@/lib/money";
 import {
   hasFoldedFees,
   PARTLY_READ_NOTE,
+  REASON,
   readingIncomplete,
   reviewHints,
   rowKey,
@@ -300,7 +301,10 @@ export function ReviewStep({ go }: { go: (s: "scan" | "split") => void }) {
               key={it.id}
               item={it}
               index={i}
-              reason={hints.reasons.get(rowKey(it))}
+              reason={
+                hints.reasons.get(rowKey(it)) ??
+                (incomplete?.partly ? REASON.partlyRead : undefined) // D16
+              }
               onRemove={() => remove(it, i)}
             />
           ))}

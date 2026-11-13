@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { BillProvider, useBill } from "@/hooks/use-bill";
-import { PARTLY_READ_NOTE, parseReceiptText } from "@/lib/scan";
+import { markUnchecked, PARTLY_READ_NOTE, parseReceiptText, REASON } from "@/lib/scan";
 import { ReviewStep } from "./ReviewStep";
 
 const WARNING = "Your receipt's delivery/platform fees will drop out if you calculate by %.";
@@ -33,8 +33,9 @@ function Scanned({ text, partlyRead = false }: { text: string; partlyRead?: bool
   useEffect(() => {
     if (started.current) return; // load the scanned receipt once, as ScanStep does
     started.current = true;
-    const receipt = parseReceiptText(text).receipt;
-    // What scanReceipt adds when the photo was only partly read (D14).
+    const parsed = parseReceiptText(text);
+    // What scanReceipt does when the photo was only partly read: rows flagged (D16), note added (D14).
+    const receipt = partlyRead ? markUnchecked(parsed, REASON.partlyRead).receipt : parsed.receipt;
     if (partlyRead) receipt.ocrWarnings = [PARTLY_READ_NOTE, ...(receipt.ocrWarnings ?? [])];
     startFromReceipt(receipt);
   }, [startFromReceipt, text, partlyRead]);
@@ -217,5 +218,23 @@ Banana Bread    1    4.20`;
     renderReview(REPAIRED);
     await screen.findByDisplayValue("Fish Burger");
     expect(screen.queryByText(TITLE)).not.toBeInTheDocument();
+    expect(screen.queryByText(REASON.partlyRead)).not.toBeInTheDocument();
+  });
+
+  it("highlights every row of a partly read photo, with a reason (D16)", async () => {
+    renderReview(
+      `SAMPLE DINER\nItem           Amount\nFish Burger    1O.50\nIced Lemon      2.50\nTotal          13.00`,
+      true,
+    );
+    await screen.findByDisplayValue("Iced Lemon");
+    // A row flagged only because the photo was partly read says so; the repaired row keeps its reason.
+    expect(screen.getAllByText(REASON.partlyRead)).toHaveLength(1);
+    expect(screen.getByText(REASON.repaired)).toBeInTheDocument();
+  });
+
+  it("highlights every row when no total was read, with a reason (D16)", async () => {
+    renderReview(`SAMPLE CAFE\nFlat White    5.60\nBanana Bread  4.20`);
+    await screen.findByDisplayValue("Flat White");
+    expect(screen.getAllByText(REASON.noTotal)).toHaveLength(2);
   });
 });

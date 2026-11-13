@@ -49,7 +49,15 @@ import {
   type NumberFormat,
 } from "./numbers";
 import { anchorItems, type AnchorOutcome } from "./anchor";
-import { checkChargeRates, fmt, reconcileCharges } from "./reconcile";
+import {
+  checkChargeRates,
+  fmt,
+  isConsistent,
+  MAX_ROUNDING,
+  reconcileCharges,
+  scoreParse,
+  totalDisagreement,
+} from "./reconcile";
 import {
   findPaymentTotal,
   findSumRow,
@@ -107,6 +115,8 @@ export const REASON = {
   check: "Check this line",
   notNeeded: "Not needed to reach the printed total",
   noPriceNotNeeded: "No price, and the total is reached without it",
+  noTotal: "No total was read to check this line",
+  partlyRead: "Part of the photo was not read",
 } as const;
 
 /** Dates and times in header lines ("21/10/26", "2026-10-21", "20:05"): never on an item row. */
@@ -121,7 +131,6 @@ const SUMMARY: ReadonlySet<LineKind> = new Set([
   "rounding",
   "total",
 ]);
-const MAX_ROUNDING = 5; // cents; cash rounding beyond this is treated as a misread (D4)
 
 /**
  * Collapses runs of spaces but keeps a two-space column gap. A "|" with space (or the line edge)
@@ -249,6 +258,69 @@ function headerZoneEnd(lines: readonly Line[]): number {
 }
 
 export function parseReceiptLines(rawLines: string[], rawText = rawLines.join("\n")): ParseResult {
+  return markForReview(readReceiptLines(rawLines, rawText));
+}
+
+/**
+ * How good a reading is, for choosing between OCR passes (`scanReceipt`'s scorer). It scores the
+ * reading as read, before the never-silent review marks (D16, D17): those are review policy, not
+ * evidence about the reading, so they leave the pass choice (D14) exactly as it was.
+ */
+export function scoreReading(lines: string[]): { score: number; good: boolean } {
+  const { receipt } = readReceiptLines(lines, lines.join("\n"));
+  return { score: scoreParse(receipt), good: isConsistent(receipt) };
+}
+
+/** Money fields a reading can get wrong; all are marked when nothing checks them (D16). */
+const MONEY_FIELDS = ["items", "total", "charges", "discount"] as const;
+
+/**
+ * D16: nothing on this reading can be trusted silently (no total was read, or the photo was only
+ * partly read). Every item row is flagged (a row flagged for another reason keeps its reason) and
+ * the money fields are marked uncertain. Line amounts, quantities and names are not changed.
+ * Pure: returns a new result.
+ */
+export function markUnchecked(res: ParseResult, reason: string): ParseResult {
+  const uncertain = new Set(res.receipt.uncertainFields ?? []);
+  for (const f of MONEY_FIELDS) uncertain.add(f);
+  const items = res.receipt.items.map((it) => (it.flagged ? it : { ...it, flagged: true }));
+  return {
+    ...res,
+    receipt: { ...res.receipt, items, uncertainFields: [...uncertain] },
+    itemReasons: res.receipt.items.map((it, i) => (it.flagged ? res.itemReasons[i]! : reason)),
+  };
+}
+
+/** The never-silent review marks (D16, D17), applied after the reading is parsed. */
+function markForReview(res: ParseResult): ParseResult {
+  const r = res.receipt;
+  // D16: with no total, nothing checks the items and charges.
+  if (r.receiptTotalCents === null) return markUnchecked(res, REASON.noTotal);
+  // D17: a total that disagrees with the items and charges is marked, not only shown in the banner.
+  const off = totalDisagreement(r);
+  if (!off) return res;
+  const uncertain = new Set(r.uncertainFields ?? []);
+  uncertain.add("total");
+  uncertain.add("charges");
+  const warnings = [...res.warnings];
+  // With every price read, the review screen's mismatch banner already shows the difference.
+  if (!off.complete)
+    warnings.push(
+      `The prices that were read already come to ${fmt(off.readCents)}, more than the printed total ${fmt(r.receiptTotalCents)}. Check the total and the charges.`,
+    );
+  return {
+    ...res,
+    warnings,
+    receipt: {
+      ...r,
+      uncertainFields: [...uncertain],
+      ocrWarnings: warnings.slice(0, 20).map((w) => w.slice(0, 300)),
+    },
+  };
+}
+
+/** Parses the lines as read, without the never-silent review marks (see `parseReceiptLines`). */
+function readReceiptLines(rawLines: string[], rawText: string): ParseResult {
   const r = emptyReceipt();
   r.rawOcrText = rawText.slice(0, 20000);
   const warnings: string[] = [];

@@ -117,7 +117,8 @@ TID: 00001111`;
 Counter 2   1.30
 Tel 6000 0000
 Hex Key Set   8.90
-Cable Ties    2.10`;
+Cable Ties    2.10
+Total        12.30`; // a total is read, so only the doubtful row is flagged (D16)
     const res = parseReceiptText(T);
     const row = res.receipt.items.findIndex((i) => i.description === "Counter 2");
     expect(res.receipt.items[row]!.flagged).toBe(true);
