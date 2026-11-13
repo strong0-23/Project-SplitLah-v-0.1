@@ -61,14 +61,31 @@ export interface ScanDeps {
   pool?: EnginePool;
 }
 
+const longWord = (w: OcrPage["words"][number]) => w.text.replace(/[^A-Za-z0-9]/g, "").length >= 3;
+
 /** Counts confident, horizontal real words. Sideways text yields few, tall boxes. Pure. */
 export function orientationScore(page: OcrPage): number {
   return page.words.filter(
-    (w) =>
-      w.confidence > 70 &&
-      w.text.replace(/[^A-Za-z0-9]/g, "").length >= 3 &&
-      w.bbox.x1 - w.bbox.x0 > w.bbox.y1 - w.bbox.y0,
+    (w) => w.confidence > 70 && longWord(w) && w.bbox.x1 - w.bbox.x0 > w.bbox.y1 - w.bbox.y0,
   ).length;
+}
+
+/** A probe this good may end the orientation search early (with `ORIENT_EARLY_SHARE`). */
+export const ORIENT_EARLY_SCORE = 12;
+/** Share of a probe's longer words that must be confident before the search stops early. */
+export const ORIENT_EARLY_SHARE = 0.35;
+
+/**
+ * May the orientation search stop at this probe (D14)? Upside-down text still gives some confident,
+ * wide words (often a dozen or more on a long receipt), but only as a small share of the words read;
+ * upright text gives a large share. So a probe stops the search only when it has enough confident
+ * words AND they are a fair share of its longer words; otherwise the remaining rotations are probed
+ * and the best score wins. Pure.
+ */
+export function orientationSettled(page: OcrPage): boolean {
+  const score = orientationScore(page);
+  const long = page.words.filter(longWord).length;
+  return score >= ORIENT_EARLY_SCORE && score >= ORIENT_EARLY_SHARE * long;
 }
 
 export async function runOcr(
@@ -220,14 +237,13 @@ export async function runOcr(
         const rot = cands[i]!;
         range = [0.25 + (0.2 * i) / cands.length, 0.25 + (0.2 * (i + 1)) / cands.length];
         report("Checking orientation", 0);
-        const score = orientationScore(
-          await recognize(
-            flattenCanvas(render(bitmap, rot, autoCrop(bitmap, rot), PROBE_PIXELS)),
-            "block",
-          ),
+        const probe = await recognize(
+          flattenCanvas(render(bitmap, rot, autoCrop(bitmap, rot), PROBE_PIXELS)),
+          "block",
         );
+        const score = orientationScore(probe);
         if (score > best.score) best = { rot, score };
-        if (score >= 12) break;
+        if (orientationSettled(probe)) break;
       }
       if (best.score < 3)
         throw new OcrError(
