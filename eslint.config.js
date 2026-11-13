@@ -15,6 +15,10 @@ export default tseslint.config(
       ".vinxi",
       "tools/receipt-regression/baseline/**",
       "tools/receipt-regression/reference-format/*.mjs",
+      // Bundled Tesseract files (self-hosted, pinned, minified) and local Wrangler caches.
+      "public/tesseract/**",
+      ".wrangler/**",
+      "cloudflare/.wrangler/**",
     ],
   },
   {
