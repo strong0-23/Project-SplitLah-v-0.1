@@ -373,6 +373,38 @@ charges don't match the printed total.
 come back after a reload.
 **Where.** `review.ts`, `ReviewStep.tsx`.
 
+## Work-order rules (decided under the owner's delegation, 12 Nov 2026)
+
+### D15: a quantity confirmed by the receipt's printed item count (WO-002)
+**Rule.** When the receipt prints how many items were sold ("Total Qty 7", "Total 5 items",
+"Items: 3", "No. of items 4", and the Malay/Indonesian, German, French, Spanish, Italian and Dutch
+equivalents in `lexicon.ts`), the item rows that D7 left with exactly one unresolved bare whole
+number from 1 to 99, at the start of the name or at its end (after a per-item tax marker if there
+is one), are tried as one assignment: every such row takes its number as the quantity, every other
+row keeps the quantity it already has. Only if the quantities then add up to the printed count
+exactly are the numbers taken: they become quantities, leave the names (with the tax marker in
+front of a trailing number), and the D7 flag on those rows is cleared. A row that is also doubtful
+for another reason stays highlighted ("Check this line"). Line totals never change. Otherwise
+nothing changes: no count read, counts that disagree or are not whole numbers, a row with numbers
+at both ends, a candidate row that already has another quantity or whose number is not at an end
+of its whole name, any item row without a line total, or a sum off by even one. All or nothing: it
+never takes some of the numbers. Explicit quantities ("2 x", "x2", "2 @") and D7's own two tests
+(Qty heading, unit × number = total) always win. It runs after the total anchor (D9), on the rows
+the anchor kept, so lines it set aside are not counted. A review warning says the quantities were
+read from the names because they add up to the printed count.
+**Side effect on D7.** A per-item tax marker in front of the number ("SOUP(GST*) 2") is also
+dropped from the name when D7's unit × number test takes the number, as it already was when the
+marker ends the name.
+**Count wording.** Matched on the whole label with its delimiters. A bare "Items: N" needs the
+plural; a per-row "Qty 2" and "Pax" (people) are never item counts. On a line that also prints
+money the count is read only when the line starts with "Total" (D10 already reads it as a total).
+**Why.** When OCR damages the Qty heading and no unit price is printed, real quantities stay in the
+names under D7 (Batch 3: the largest remaining cause of corrections the parser can fix). The
+printed count is independent evidence; requiring an exact match over every row, all or nothing,
+keeps a product name ending in a size or model number from becoming a quantity by coincidence.
+**Where.** `lexicon.ts` (`itemCountOf`), `items.ts` (`BareNumber`, `quantitiesByItemCount`),
+`parse.ts` (candidates and the step after the anchor), `item-count.test.ts`.
+
 ## Work orders and merging (owner decision, 12 Nov 2026)
 
 ### Work is queued in `docs/WORK-ORDERS.md` and executed by Claude Code without confirmation
