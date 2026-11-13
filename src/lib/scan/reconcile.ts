@@ -9,6 +9,35 @@ import type { Receipt } from "../types";
 
 export const fmt = (c: number) => `${c < 0 ? "-" : ""}${(Math.abs(c) / 100).toFixed(2)}`;
 
+/** Cash rounding of up to 5 cents (D4); a larger difference is a misread, not rounding. */
+export const MAX_ROUNDING = 5;
+
+/**
+ * D17: the printed total disagrees with the items and charges that were read, by more than D4's
+ * cash rounding, under either tax reading (tax added on top, or already in the prices). With item
+ * prices missing, only the prices that were read are known, so it disagrees only when they (with
+ * the charges, less the discount) already come to more than the total. A missing price is never
+ * guessed. Returns the amount the total was compared with, or null when the total agrees (or none
+ * was read). Pure; uses the receipt's own charge fields, so it can run after `reconcileCharges`.
+ */
+export function totalDisagreement(r: Receipt): { readCents: number; complete: boolean } | null {
+  const total = r.receiptTotalCents;
+  if (total === null) return null;
+  const priced = r.items.filter((i) => i.lineTotalCents !== null);
+  const complete = priced.length === r.items.length;
+  const sum = priced.reduce((s, i) => s + (i.lineTotalCents ?? 0), 0);
+  const svc = r.serviceEnabled ? (r.serviceAmountCents ?? 0) : 0;
+  const tax = r.gstEnabled ? (r.gstAmountCents ?? 0) : 0;
+  const base = sum - r.discountCents + svc; // tax already in the prices
+  if (complete) {
+    const near = (v: number) => Math.abs(total - v) <= MAX_ROUNDING;
+    return near(base) || near(base + tax) ? null : { readCents: base, complete };
+  }
+  // Unread prices and the tax can only add to what was read (a missing price is never negative).
+  const least = base + Math.min(tax, 0);
+  return least > total + MAX_ROUNDING ? { readCents: least, complete } : null;
+}
+
 export interface ChargeEvidence {
   sum: number;
   serviceAmt: number | null;

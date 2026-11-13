@@ -202,6 +202,12 @@ describe("scan: a partly read photo is said so on the receipt (D14)", () => {
     const res = await scanWith(2);
     expect(res.receipt.ocrWarnings?.[0]).toBe(PARTLY_READ_NOTE);
     expect(res.warnings[0]).toBe(PARTLY_READ_NOTE);
+    // D16: nothing on a partly read photo passes silently.
+    expect(res.receipt.items.length).toBeGreaterThan(0);
+    expect(res.receipt.items.every((i) => i.flagged)).toBe(true);
+    expect(res.receipt.uncertainFields).toEqual(
+      expect.arrayContaining(["items", "total", "charges", "discount"]),
+    );
   });
 
   it("adds nothing when the words cover the printed rows", async () => {

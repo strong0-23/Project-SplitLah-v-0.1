@@ -791,7 +791,8 @@ describe("parser-v2 trailing-quantity.batch1d.test.ts: trailing numbers require 
     "Description Unit Price Qty Amount\nCOFFEE 3.50 2 7.00",
     "Description Qty Unit Price Amount\nCOFFEE 2 3.50 7.00",
   ])("keeps headed unit price distinct from the full amount: %s", (body) => {
-    expect(parse(`EXAMPLE MERCHANT\n${body}`).items[0]).toMatchObject({
+    // ADAPTED (WO-004, D16): a printed total is added; with none read, every row is flagged.
+    expect(parse(`EXAMPLE MERCHANT\n${body}\nTOTAL 7.00`).items[0]).toMatchObject({
       description: "COFFEE",
       quantity: 2,
       lineTotalCents: 700,
@@ -800,7 +801,8 @@ describe("parser-v2 trailing-quantity.batch1d.test.ts: trailing numbers require 
   });
 
   it("preserves an independent full amount after an explicit @ unit price", () => {
-    expect(parse("EXAMPLE MERCHANT\nCOFFEE 2 @ 3.50 7.00").items[0]).toMatchObject({
+    // ADAPTED (WO-004, D16): a printed total is added; with none read, every row is flagged.
+    expect(parse("EXAMPLE MERCHANT\nCOFFEE 2 @ 3.50 7.00\nTOTAL 7.00").items[0]).toMatchObject({
       description: "COFFEE",
       quantity: 2,
       lineTotalCents: 700,

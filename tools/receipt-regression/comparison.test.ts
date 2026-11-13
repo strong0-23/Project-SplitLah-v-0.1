@@ -12,6 +12,7 @@ import {
   median,
   nameMatchConflict,
   parseSummaries,
+  reviewBurden,
   summaryBlock,
   type DesktopRun,
   type ReceiptEngineResult,
@@ -182,6 +183,21 @@ describe("summaries: IDs and counts only, and pasting", () => {
       within: 6,
       silent: 0,
     });
+  });
+
+  it("round-trips the review burden (WO-004) and counts only money fields", () => {
+    const r = run("Edge", 1, 1);
+    r.results[0]!.review = reviewBurden({
+      items: [{ flagged: true }, {}, { flagged: false }],
+      uncertainFields: ["merchant", "total", "charges", "currency"],
+    });
+    expect(r.results[0]!.review).toEqual({ flagged: 1, rows: 3, uncertain: 2 });
+    const block = summaryBlock(r, true);
+    expect(block).toContain("| flagged=1/3 | uncertain=2");
+    expect(parseSummaries(block).runs[0]!.results[0]!.review).toEqual(r.results[0]!.review);
+    // Older summaries without the fields read as "not measured".
+    const old = block.replace(" | flagged=1/3 | uncertain=2", "");
+    expect(parseSummaries(old).runs[0]!.results[0]!.review).toBeNull();
   });
 
   it("combining in one browser shows each pasted run with its recomputed aggregate", () => {

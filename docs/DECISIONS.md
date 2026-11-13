@@ -444,6 +444,44 @@ keeps a product name ending in a size or model number from becoming a quantity b
 **Where.** `lexicon.ts` (`itemCountOf`), `items.ts` (`BareNumber`, `quantitiesByItemCount`),
 `parse.ts` (candidates and the step after the anchor), `item-count.test.ts`.
 
+### D16: nothing checks the money fields → every row flagged, money fields marked (WO-004)
+**Rule.** When no printed total was read, or the scan says the photo was only partly read (D14's
+`PARTLY_READ_NOTE`), every item row is flagged and the items, total, charges and discount are marked
+uncertain. A row already flagged for another reason keeps that reason; the others get "No total was
+read to check this line" or "Part of the photo was not read" under the row. No name, quantity,
+amount or total changes. The no-total case runs at the end of `parseReceiptLines`, so the review
+screen derives the same reasons from the stored text (D13); the partly-read case runs in
+`scanReceipt` (`markUnchecked`), and the review screen gives the partly-read reason from the stored
+note. The marks are applied after the reading is scored: `scanReceipt`'s scorer (`scoreReading`)
+scores the reading before them, so the second-pass choice (D14) cannot change.
+**Why.** With no total, nothing on the receipt checks the item list, and a partly read photo may be
+missing any line, so no row or charge can be trusted silently ("Never silent"). On the WO-001
+branch the payment and total lines of a receipt whose labels were damaged became unflagged items
+(REG108), and a partly read receipt had a wrong quantity and a wrong discount with no signal
+(REG101). Flags cost the user a look; a silent wrong value mis-splits the bill.
+**Where.** `parse.ts` (`markUnchecked`, `markForReview`, `scoreReading`, `REASON.noTotal`,
+`REASON.partlyRead`), `index.ts` (`scanReceipt`), `ReviewStep.tsx`; tests in
+`never-silent.test.ts`, `modules.test.ts`, `ReviewStep.test.tsx`.
+
+### D17: a printed total that disagrees with the items and charges is marked uncertain (WO-004)
+**Rule.** When a total was read and the items + service − discount (+ tax) differ from it by more
+than D4's cash rounding (5 cents) under both tax readings (added on top, or already in the prices),
+the total and the charges are marked uncertain, not only shown in the mismatch banner. When some
+item prices are missing, only the prices that were read are known: the total is marked only when
+they (with the service charge, less the discount) already come to more than the total, and a
+warning says so. A missing price is never guessed. Nothing is changed.
+**Why.** A total read with a misread digit was shown as the payable total with no mark (REG106 on
+the WO-001 branch: a price row was read, two rows had no price, and the total was below the price
+that was read). The banner needs every price to compute the difference, so it could not show.
+**Where.** `reconcile.ts` (`totalDisagreement`, `MAX_ROUNDING`), `parse.ts` (`markForReview`);
+tests in `never-silent.test.ts`.
+
+**Not adopted (WO-004 candidates).** Rows below the payment block were not given a new rule: after a
+read total, rows are already skipped or flagged ("Printed after the total"), and where the labels
+were too damaged for the parser to see a total, payment or item-count line, such a rule could not
+fire; D16 covers that case. A repaired total label marking the total uncertain was not needed: no
+new silent error came from one (REG106's total label was read cleanly, REG108's was not read).
+
 ## Work orders and merging (owner decision, 12 Nov 2026)
 
 ### Work is queued in `docs/WORK-ORDERS.md` and executed by Claude Code without confirmation

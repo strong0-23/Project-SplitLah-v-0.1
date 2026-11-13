@@ -61,6 +61,10 @@ PLAYWRIGHT_MODULE=/path/to/node_modules/playwright/index.mjs CHROME_PATH=/usr/bi
 node tools/receipt-regression/dev-run.mjs [--repeat 3] [--ids REG001,REG002] [--revision label]
 ```
 
+Each `receipt |` line also gives the review burden of the first scan (WO-004): `flagged=` highlighted
+item rows out of all item rows, and `uncertain=` how many money fields (items, total, charges,
+discount) are marked uncertain. More flags are acceptable; more corrections are not.
+
 `--repeat N` scans the set N times, each in a fresh browser, and adds `timing |` lines: each
 receipt's median first-scan time and the median of the runs' first-scan medians (use it on a shared
 or busy machine). `HARNESS_PORT` picks the dev server's port (default 8081).

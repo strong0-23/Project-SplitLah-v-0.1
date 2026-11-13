@@ -17,7 +17,7 @@
  *   engine-pool.ts      keeps a loaded engine between scans in a page session (idle timeout)
  */
 import { sharedEnginePool } from "./engine-pool";
-import { isConsistent, parseReceiptLines, scoreParse, type ParseResult } from "./parse";
+import { markUnchecked, parseReceiptLines, REASON, scoreReading, type ParseResult } from "./parse";
 import { PARTLY_READ_NOTE } from "./review";
 import { runOcr, type OcrProgress, type ScanDeps } from "./scan";
 import type { EnginePool } from "./engine-pool";
@@ -37,7 +37,9 @@ export {
   parseReceiptText,
   scoreParse,
   isConsistent,
+  markUnchecked,
   REASON,
+  scoreReading,
   type ParseResult,
   type SetAsideRow,
 } from "./parse";
@@ -82,15 +84,16 @@ export async function scanReceipt(
 ): Promise<ScanReceiptResult> {
   const deps: ScanDeps = {
     pool,
-    scorer: (lines) => {
-      const { receipt } = parseReceiptLines(lines);
-      return { score: scoreParse(receipt), good: isConsistent(receipt) };
-    },
+    // Scores the reading as read, before the never-silent review marks (D16), so the pass choice
+    // (D14) is unchanged by them.
+    scorer: scoreReading,
     ...(createEngine ? { createEngine } : {}),
   };
   const res = await runOcr(file, opts, onProgress, signal, deps);
-  const parsed = parseReceiptLines(res.lines); // raw text shown to the user = the rows the parser read
+  let parsed = parseReceiptLines(res.lines); // raw text shown to the user = the rows the parser read
   if (res.partlyRead) {
+    // D16: nothing on a partly read photo is trusted silently: every row flagged, money fields marked.
+    parsed = markUnchecked(parsed, REASON.partlyRead);
     // D14: said first, in the receipt's existing warnings (nothing new is stored).
     parsed.warnings = [PARTLY_READ_NOTE, ...parsed.warnings];
     parsed.receipt.ocrWarnings = [PARTLY_READ_NOTE, ...(parsed.receipt.ocrWarnings ?? [])].slice(

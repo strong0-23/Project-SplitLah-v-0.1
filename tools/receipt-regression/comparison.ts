@@ -49,6 +49,33 @@ export interface ReceiptEngineResult {
   coverage?: Coverage | null | undefined;
   /** Did the review screen warn that the photo was only partly read (D14)? Absent: not measured. */
   incomplete?: boolean | undefined;
+  /**
+   * Review burden of the first scan (WO-004): highlighted item rows out of all item rows, and how
+   * many money fields (items, total, charges, discount) are marked uncertain. Absent: not measured.
+   */
+  review?: ReviewBurden | null | undefined;
+}
+
+/** Counts only. See `ReceiptEngineResult.review`. */
+export interface ReviewBurden {
+  flagged: number;
+  rows: number;
+  uncertain: number;
+}
+
+/** Money fields counted in `ReviewBurden.uncertain` (merchant and currency marks are not). */
+export const REVIEW_MONEY_FIELDS: readonly string[] = ["items", "total", "charges", "discount"];
+
+/** The review burden of a scanned receipt: flagged rows and uncertain money fields. */
+export function reviewBurden(r: {
+  items: ReadonlyArray<{ flagged?: boolean | undefined }>;
+  uncertainFields?: readonly string[] | undefined;
+}): ReviewBurden {
+  return {
+    flagged: r.items.filter((i) => i.flagged).length,
+    rows: r.items.length,
+    uncertain: REVIEW_MONEY_FIELDS.filter((f) => r.uncertainFields?.includes(f)).length,
+  };
 }
 
 export interface RunInfo {
@@ -208,7 +235,17 @@ export function receiptLine(r: ReceiptEngineResult): string {
     `tags=${r.tags?.length ? cleanTags(r.tags).join(",") || "-" : "-"}`,
     `coverage=${r.coverage ? `${r.coverage.found}/${r.coverage.of}` : "-"}`,
     `incomplete=${r.incomplete === undefined ? "-" : r.incomplete ? "yes" : "no"}`,
+    `flagged=${r.review ? `${r.review.flagged}/${r.review.rows}` : "-"}`,
+    `uncertain=${r.review ? r.review.uncertain : "-"}`,
   ].join(" | ");
+}
+
+/** The review burden from a summary line's `flagged=` and `uncertain=` fields; null when absent. */
+function reviewOf(flagged: string | undefined, uncertain: string | undefined): ReviewBurden | null {
+  const m = /^(\d{1,4})\/(\d{1,4})$/.exec(flagged ?? "");
+  const u = /^\d{1,2}$/.test(uncertain ?? "") ? Number(uncertain) : null;
+  if (!m || u === null || Number(m[1]) > Number(m[2])) return null;
+  return { flagged: Number(m[1]), rows: Number(m[2]), uncertain: u };
 }
 
 /** `found/of` from a summary line; null when absent or malformed. */
@@ -329,6 +366,7 @@ export function parseSummaries(text: string): Parsed {
         coverage: coverageOf(f.get("coverage")),
         incomplete:
           f.get("incomplete") === "yes" ? true : f.get("incomplete") === "no" ? false : undefined,
+        review: reviewOf(f.get("flagged"), f.get("uncertain")),
       });
     }
   });
