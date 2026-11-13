@@ -105,7 +105,7 @@ Say what the choice is, what you recommend and why, in a few plain sentences.
 
 ### WO-001: Stop losing printed text before the parser sees it
 
-- **Status:** open
+- **Status:** in review (PR #15); held until WO-004 lands, then merged together
 - **Branch:** `wo/001-reading-coverage`
 - **Report:** `docs/reports/2026-11-wo001-reading-coverage.md`
 - **Decision ID for new rules:** D14
@@ -227,6 +227,48 @@ a model, with a count that does not match; a count that matches only if some num
 
 **Acceptance.** `npm run lint` finishes with 0 errors. All checks pass. The formatting commit
 changes no behaviour: tests, type checks and build pass before and after.
+
+### WO-004: Never silent on a newly readable receipt
+
+- **Status:** open
+- **Branch:** `wo/004-never-silent`, cut from `origin/wo/001-reading-coverage` (not from `main`).
+  Open the PR with base `wo/001-reading-coverage`. The coordinator then merges this PR into that
+  branch and merges PR #15 into `main`, so both land together.
+- **Report:** `docs/reports/2026-11-wo004-never-silent.md`
+- **Decision ID for new rules:** D16 (and D17, … if more than one rule)
+
+**Why.** WO-001 lets text through on two development receipts that were unreadable before. The
+parser now reads it and gives three wrong values the app doesn't flag: silent errors went from
+4 to 7. A newly readable receipt must never be silently wrong; the standing rule "Never silent"
+applies. Silent errors are defined in `tools/receipt-regression/model.ts` (`isSilent`): per field,
+so a receipt-level warning does not count as a signal.
+
+**Scope.** General rules only (standing rule 9). Start from your own diagnosis of each new silent
+error on the WO-001 branch (receipt IDs and field kinds in the report, nothing else), then fix
+the general pattern behind it. Expected candidates, to confirm or reject by diagnosis:
+
+1. **A partly read photo marks its money fields for review.** When the partly-read note from D14 is
+   present, or no total was read, every item row is flagged and the total and charges are marked
+   uncertain. If the photo was only partly read, nothing on it can be trusted silently.
+2. **A total that does not reconcile is marked uncertain.** When items + charges − discount differ
+   from the printed total by more than D4's cash rounding, the total and the charges are marked
+   uncertain, not only shown in the banner.
+3. **Rows below the payment block are not trusted as items.** Rows printed after the total,
+   payment or item-count lines are flagged (so the D9 anchor may set them aside), unless an item
+   heading follows. Check this against D9 and D12 so the rules don't overlap.
+4. **A repaired total label** (OCR damage read as "Total") marks the total uncertain (D8 style).
+
+Keep each rule in the module that owns it (`parse.ts`, `reconcile.ts`, `review.ts`, `lexicon.ts`).
+No change to the scan or image stages, which WO-001 owns.
+
+**Acceptance.** Measured as WO-001 did (`tools/receipt-regression/dev-run.mjs`, same browser,
+back to back, `origin/main` against this branch):
+
+- Silent errors at most 4 in total, and no receipt has more silent errors than on `main`.
+- No receipt has more corrections than on `main`.
+- Receipts within 2 corrections at least 5 of 12; reading coverage unchanged from WO-001.
+- Report the review burden: flagged rows and uncertain fields per receipt, before and after.
+  More flags are acceptable; more corrections are not.
 
 ## Done
 
